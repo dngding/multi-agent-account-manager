@@ -918,6 +918,11 @@ body,
   color: #1d4ed8;
 }
 
+.proxy-status.shared {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
 .proxy-action.configured {
   color: #2563eb;
 }

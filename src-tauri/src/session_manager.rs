@@ -4,8 +4,9 @@ use crate::providers::{
   NavigationDecision, ProviderId, ProviderInfo,
 };
 use crate::storage::{
-  detect_conflicts, load_or_migrate_store, normalize_uuid, now_ms, save_store_atomic, AccountKey,
-  AccountRecord, AccountsStoreFile, AuthState, ConflictItem, QuotaDetail,
+  detect_conflicts, detect_shared_proxy_accounts, load_or_migrate_store, normalize_uuid, now_ms,
+  save_store_atomic, AccountKey, AccountRecord, AccountsStoreFile, AuthState, ConflictItem,
+  QuotaDetail,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -899,6 +900,7 @@ pub struct ManagerSnapshot {
   pub last_committed: Option<AccountKey>,
   pub pending_cleanup: Vec<AccountKey>,
   pub conflicts: Vec<ConflictItem>,
+  pub shared_proxy_accounts: Vec<AccountKey>,
   pub notice: Option<String>,
   pub modal_active: bool,
 }
@@ -1025,6 +1027,7 @@ impl SessionManager {
       last_committed: locked.store.last_committed.clone(),
       pending_cleanup: locked.store.pending_cleanup.clone(),
       conflicts: locked.conflicts.clone(),
+      shared_proxy_accounts: detect_shared_proxy_accounts(&locked.store.accounts),
       notice: locked.notice.clone(),
       modal_active: locked.modal_active,
     }

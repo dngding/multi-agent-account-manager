@@ -77,6 +77,33 @@ pub struct ConflictItem {
   pub providers: Vec<ProviderId>,
 }
 
+pub fn detect_shared_proxy_accounts(accounts: &[AccountRecord]) -> Vec<AccountKey> {
+  let mut accounts_by_proxy = BTreeMap::<String, Vec<AccountKey>>::new();
+
+  for account in accounts {
+    let Some(raw_proxy) = account.proxy_url.as_deref() else {
+      continue;
+    };
+    let Ok(Some(proxy_url)) = crate::network::parse_account_proxy(raw_proxy) else {
+      continue;
+    };
+
+    accounts_by_proxy
+      .entry(proxy_url.to_string())
+      .or_default()
+      .push(AccountKey {
+        provider_id: account.provider_id,
+        uuid: account.uuid.clone(),
+      });
+  }
+
+  accounts_by_proxy
+    .into_values()
+    .filter(|keys| keys.len() > 1)
+    .flatten()
+    .collect()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountsStoreFile {
@@ -94,6 +121,54 @@ impl Default for AccountsStoreFile {
       last_committed: None,
       pending_cleanup: Vec::new(),
     }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{detect_shared_proxy_accounts, AccountRecord};
+  use crate::providers::ProviderId;
+
+  fn account(uuid: &str, proxy_url: Option<&str>) -> AccountRecord {
+    AccountRecord {
+      provider_id: ProviderId::Muse,
+      uuid: uuid.to_string(),
+      alias: uuid.to_string(),
+      created_at_ms: 0,
+      auto_alias: false,
+      avatar_url: None,
+      quota_text: None,
+      quota_percent: None,
+      quota_detail: None,
+      auth_state: Default::default(),
+      proxy_url: proxy_url.map(str::to_string),
+    }
+  }
+
+  #[test]
+  fn flags_all_accounts_sharing_a_normalized_proxy_endpoint() {
+    let accounts = vec![
+      account("account-a", Some("http://proxy.example:8080")),
+      account("account-b", Some("HTTP://PROXY.EXAMPLE:8080/")),
+      account("account-c", Some("socks5://proxy.example:1080")),
+      account("account-d", None),
+    ];
+
+    let shared = detect_shared_proxy_accounts(&accounts);
+    assert_eq!(shared.len(), 2);
+    assert!(shared.iter().any(|key| key.uuid == "account-a"));
+    assert!(shared.iter().any(|key| key.uuid == "account-b"));
+  }
+
+  #[test]
+  fn ignores_empty_and_invalid_proxy_settings() {
+    let accounts = vec![
+      account("account-a", None),
+      account("account-b", Some("not-a-proxy")),
+      account("account-c", Some("http://user:secret@proxy.example:8080")),
+    ];
+
+    assert!(detect_shared_proxy_accounts(&accounts).is_empty());
   }
 }
 

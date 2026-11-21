@@ -59,6 +59,7 @@ export interface ManagerSnapshot {
   lastCommitted: AccountKey | null;
   pendingCleanup: AccountKey[];
   conflicts: ConflictItem[];
+  sharedProxyAccounts: AccountKey[];
   notice: string | null;
   modalActive: boolean;
 }

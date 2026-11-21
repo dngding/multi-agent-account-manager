@@ -1,6 +1,6 @@
 # Muse 多账号隔离开发指引
 
-> 版本：v1.3
+> 版本：v1.4
 > 日期：2026-11-21
 > 基座项目：[ldjx7/multi-agent-account-manager](https://github.com/ldjx7/multi-agent-account-manager)
 > 目标：在现有“叠号”项目基础上，支持 Windows 优先、Android 后续的多 Muse 账号管理，并逐步增强登录态、网络和设备隔离。
@@ -54,9 +54,10 @@
 - macOS / Android 暂不支持 per-account proxy；已有非空代理绑定时阻止启动会话，不静默忽略。
 - 切换到绑定代理的账号或预热该账号视图前，以代理服务器为入口执行一次有时限的 HTTP CONNECT 或 SOCKS5 目标连接握手；SOCKS5 把目标域名交给代理解析。DNS 查询、代理 TCP 连接和握手均有超时，检查失败时不创建目标 WebView，切号前置检查失败也保留 Rust 侧当前会话。每次切到绑定代理的账号都会重做检查，包括复用已预热的视图。
 - 切换命令失败后，前端重新读取 Rust 会话状态，避免乐观切换把仍然活动的旧账号错误显示为无活动账号。
+- 同一规范化代理地址分配给多个本机账号时，会在相关账号卡片显示“共用代理”提示；这仅识别完全相同的代理端点，不代表不同端点一定有不同公网出口。
 - 账号列表显示“已配置 · 切号时检查”；这项握手只证明检查当时代理能够建立到服务入口的连接，**不**验证公网出口 IP、国家/地区、ASN、DNS/WebRTC 实际流量路径或 WebView2 断线时的 fail-closed 行为。WebView2 子视图实际逐账号使用独立代理的能力和断代理表现仍须 Windows 实机验收。
 - 未绑定代理的账号继续遵循 Windows / WebView2 当前默认网络设置；“未配置独立代理”不能据此认定为物理直连或已实现出口隔离。
-- 已有 `npx tsc` 与 `npx vite build --configLoader runner` 的前端验证记录；当前环境未找到 Rust/Cargo 工具链，也未完成本轮变更的 Windows 实机验收。Rust 构建、握手测试和真实代理断连测试应在后续 Windows 验收时完成后再宣称通过。
+- 本轮 `tsc --noEmit`、Vite 生产构建和 `git diff --check` 均通过；仓库新增 Windows CI，在推送当前功能分支时自动运行前端构建、Rust 格式检查和 Windows Rust 单测。当前执行环境没有 Rust/Cargo 工具链，因此尚未本地运行 Rust 检查；Windows CI 和 WebView2 实机验收结果需在工作流运行后确认。真实代理断连测试通过前，不应宣称已实现 fail-closed。
 
 ## 3. 产品范围
 
@@ -293,6 +294,7 @@ Android 验收要求：
 - Windows 账号卡片可见代理配置状态，并能编辑每账号 HTTP / SOCKS5 endpoint。
 - WebView 和登录弹窗使用对应账号的代理设置；设置变更会销毁并重建已有账号视图。
 - 非 Windows 平台对已绑定代理的账号 fail closed，避免忽略该配置后照常打开。
+- 同一规范化代理 endpoint 被多个账号共用时显示账号卡片提示，不把代理 URL 或凭据暴露在提示中。
 
 尚未完成的验收：
 
@@ -302,6 +304,8 @@ Android 验收要求：
 ### P2：Windows 网络隔离与 fail-closed
 
 当前部分进展：已增加每次切号前和预热前的代理主机解析、TCP 连通及 HTTP CONNECT / SOCKS5 服务入口握手预检，配有时限；切号并发时旧检查不会覆盖或取消较新的账号切换。检查失败即阻止目标账号，并保留目前活动会话。该检查不等于 WebView2 请求已验证从配置代理出站，也不等于代理故障时已禁止直连。
+
+仓库新增 Windows CI，推送功能分支时自动运行前端生产构建、Rust 格式检查及 Windows Rust 单测，以便在 Windows runner 上验证本地无法执行的代理握手和账号关系检查测试。
 
 - 实现按账号本地代理端口。
 - 实现上游代理健康检查和 fail-closed。

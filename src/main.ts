@@ -732,6 +732,21 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
             ? `<span class="quota-warning-badge ${alertStatus}">${alertLabel}</span>`
             : "";
 
+        const sharedProxyPeers = supportsAccountProxy
+          ? state.sharedProxyAccounts
+              .filter((key) => key.providerId !== acc.providerId || key.uuid !== acc.uuid)
+              .map((key) =>
+                state.accounts.find(
+                  (account) =>
+                    account.providerId === key.providerId && account.uuid === key.uuid
+                )
+              )
+              .filter((account): account is AccountRecord => Boolean(account && account.proxyUrl))
+          : [];
+        const sharedProxyBadge = sharedProxyPeers.length
+          ? `<span class="proxy-status shared" title="与账号 ${sharedProxyPeers.map((account) => escapeHtml(account.alias)).join("、")} 共用代理地址">共用代理 · ${sharedProxyPeers.length + 1} 号</span>`
+          : "";
+
         let compactSubHtml = "";
         if (switching && !hasDetail) {
           compactSubHtml = `<div class="account-sub loading-text"><span class="quota-label-text">正在加载…</span></div>`;
@@ -798,6 +813,7 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                   <span class="account-alias">${escapeHtml(acc.alias)}</span>
                   ${shortcutHint}
                   ${alertBadgeHtml}
+                  ${sharedProxyBadge}
                   ${supportsAccountProxy ? `<span class="proxy-status ${acc.proxyUrl ? "configured" : "direct"}">${acc.proxyUrl ? "已配置 · 切号时检查" : "未配置独立代理"}</span>` : ""}
                 </div>
                 ${compactSubHtml}
