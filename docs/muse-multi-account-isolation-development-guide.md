@@ -60,6 +60,7 @@
 - 未绑定代理的账号继续遵循 Windows / WebView2 当前默认网络设置；“未配置独立代理”不能据此认定为物理直连或已实现出口隔离。
 - 本轮 `tsc --noEmit`、Vite 生产构建和 `git diff --check` 均通过；仓库新增 Windows CI，在推送当前功能分支时自动运行前端构建、Rust 单测，并将变更文件的 rustfmt 检查作为提示项。基座仍有未改动 Rust 文件存在历史格式差异，因此格式提示不阻断单测。当前执行环境没有 Rust/Cargo 工具链，因此尚未本地运行 Rust 检查；Windows CI 和 WebView2 实机验收结果需在工作流运行后确认。真实代理断连测试通过前，不应宣称已实现系统级 fail-closed。
 - 已加入 Windows 代理断线验收手册和本地 HTTP CONNECT 转发代理脚本；它用于真实 WebView2 的“先连通、再停止代理、观察关闭和重开阻断”测试，不接收或保存代理凭据。验收脚本已在本地验证 CONNECT 200、目标请求转发和停止后端口关闭，Rust 单测另覆盖代理在 HTTP 隧道握手中途断开；这些结果都不能替代真实 WebView2 故障注入。
+- Windows CI 在 Rust 单测通过后会继续构建 NSIS 安装包并上传 `windows-x64-nsis-acceptance` artifact，供本机 WebView2 断线验收使用；安装包构建成功仍不代替真实账号流量路径验收。
 
 ## 3. 产品范围
 

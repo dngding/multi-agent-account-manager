@@ -18,7 +18,7 @@ jobs:
   validate:
     name: TypeScript and Windows Rust tests
     runs-on: windows-2025
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -55,3 +55,11 @@ jobs:
           }
       - name: Run Windows Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc
+      - name: Build Windows installer
+        run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --ci
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-x64-nsis-acceptance
+          path: src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+          if-no-files-found: error

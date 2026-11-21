@@ -67,3 +67,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-p
 ```
 
 该命令覆盖代理地址校验、HTTP CONNECT / SOCKS5 握手、认证拒绝、截断响应、超大响应、代理握手中途断开，以及账号共享代理检测。真实 WebView2 断线结果必须按本手册操作记录，Rust 单测不能替代它。
+
+推送功能分支后，`Windows validation` 工作流会在单测通过后继续构建 NSIS 安装包，并以 `windows-x64-nsis-acceptance` artifact 上传。该安装包用于本手册的实机验收；若安装包构建失败，单测通过也不代表桌面应用可交付。
