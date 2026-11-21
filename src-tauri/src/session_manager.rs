@@ -3774,7 +3774,8 @@ impl SessionManager {
           }
           #[cfg(target_os = "android")]
           if let Some(slot) = &locked.active_slot {
-            let _ = crate::platform::android::update_account_title(app, slot.switch_seq, &title).await;
+            let _ =
+              crate::platform::android::update_account_title(app, slot.switch_seq, &title).await;
           }
         }
       }

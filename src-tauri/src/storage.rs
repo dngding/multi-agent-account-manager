@@ -186,7 +186,9 @@ pub fn now_ms() -> u64 {
 }
 
 pub fn normalize_uuid(raw: &str) -> Option<String> {
-  Uuid::parse_str(raw.trim()).ok().map(|u| u.hyphenated().to_string())
+  Uuid::parse_str(raw.trim())
+    .ok()
+    .map(|u| u.hyphenated().to_string())
 }
 
 pub fn detect_conflicts(accounts: &[AccountRecord]) -> Vec<ConflictItem> {
@@ -257,7 +259,10 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
         .and_then(|v| v.as_str())
         .ok_or_else(|| "账号缺少 UUID".to_string())?;
       let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "账号 UUID 非法".to_string())?;
-      let provider_id = match item_obj.get("providerId").or_else(|| item_obj.get("provider_id")) {
+      let provider_id = match item_obj
+        .get("providerId")
+        .or_else(|| item_obj.get("provider_id"))
+      {
         Some(v) => {
           let s = v.as_str().ok_or_else(|| "providerId 非法".to_string())?;
           ProviderId::parse(s).ok_or_else(|| format!("未知服务标识: {s}"))?
@@ -381,10 +386,7 @@ pub fn save_store_atomic(path: &Path, store: &AccountsStoreFile) -> Result<(), S
     fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
   }
   let bytes = serde_json::to_vec_pretty(store).map_err(|e| format!("序列化配置失败: {e}"))?;
-  let tmp_name = format!(
-    ".accounts.json.tmp.{}",
-    Uuid::new_v4().simple()
-  );
+  let tmp_name = format!(".accounts.json.tmp.{}", Uuid::new_v4().simple());
   let tmp_path = path.with_file_name(tmp_name);
 
   {
