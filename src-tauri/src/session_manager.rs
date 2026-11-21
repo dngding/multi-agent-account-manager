@@ -1935,12 +1935,19 @@ impl SessionManager {
       for (key, wv_label, vid) in warm_targets {
         let account = {
           let locked = self.inner.lock().await;
-          locked.store.accounts.iter().find(|account| {
-            account.provider_id == key.provider_id && account.uuid == key.uuid
-          }).cloned()
+          locked
+            .store
+            .accounts
+            .iter()
+            .find(|account| account.provider_id == key.provider_id && account.uuid == key.uuid)
+            .cloned()
         };
         let Some(account) = account else { continue };
-        if self.validate_pool_view(app, &account, &key, vid).await.is_err() {
+        if self
+          .validate_pool_view(app, &account, &key, vid)
+          .await
+          .is_err()
+        {
           continue;
         }
         if let Some(wv) = app.get_webview(&wv_label) {
@@ -2133,10 +2140,15 @@ impl SessionManager {
       if checked_account.proxy_pool_binding.is_some() {
         let view_id = {
           let locked = self.inner.lock().await;
-          locked.warm_pool.get(&key).map(|entry| entry.view_instance_id)
+          locked
+            .warm_pool
+            .get(&key)
+            .map(|entry| entry.view_instance_id)
         };
         if let Some(view_id) = view_id {
-          let _ = self.validate_pool_view(app, &checked_account, &key, view_id).await;
+          let _ = self
+            .validate_pool_view(app, &checked_account, &key, view_id)
+            .await;
         }
       }
       let notice = format!("代理连通性检查失败，已阻止打开该账号：{error}");
@@ -2678,25 +2690,26 @@ impl SessionManager {
       provider_id: account.provider_id,
       uuid: account.uuid.clone(),
     };
-    let proxy_url = match account.validated_proxy() {
-      Ok(proxy_url) => proxy_url,
-      Err(error) => {
-        let mut locked = self.inner.lock().await;
-        if self.current_seq.load(Ordering::SeqCst) != expected_seq {
+    let proxy_url =
+      match account.validated_proxy() {
+        Ok(proxy_url) => proxy_url,
+        Err(error) => {
+          let mut locked = self.inner.lock().await;
+          if self.current_seq.load(Ordering::SeqCst) != expected_seq {
+            return Ok(Self::snapshot_from_locked(&locked));
+          }
+          if locked.active_slot.as_ref().is_some_and(|slot| {
+            slot.account_key != key || slot.view_instance_id != view_instance_id
+          }) {
+            return Ok(Self::snapshot_from_locked(&locked));
+          }
+          locked.active_slot = None;
+          self.active_view_id.store(0, Ordering::SeqCst);
+          locked.notice = Some(format!("该账号的代理设置无效，已阻止打开：{error}"));
+          Self::apply_desktop_layout_locked(app, &locked);
           return Ok(Self::snapshot_from_locked(&locked));
         }
-        if locked.active_slot.as_ref().is_some_and(|slot| {
-          slot.account_key != key || slot.view_instance_id != view_instance_id
-        }) {
-          return Ok(Self::snapshot_from_locked(&locked));
-        }
-        locked.active_slot = None;
-        self.active_view_id.store(0, Ordering::SeqCst);
-        locked.notice = Some(format!("该账号的代理设置无效，已阻止打开：{error}"));
-        Self::apply_desktop_layout_locked(app, &locked);
-        return Ok(Self::snapshot_from_locked(&locked));
-      }
-    };
+      };
     #[cfg(not(windows))]
     if proxy_url.is_some() {
       let mut locked = self.inner.lock().await;
@@ -2826,7 +2839,11 @@ impl SessionManager {
       return Ok(self.get_snapshot().await);
     }
 
-    if self.validate_pool_view(app, &account, &key, view_instance_id).await.is_err() {
+    if self
+      .validate_pool_view(app, &account, &key, view_instance_id)
+      .await
+      .is_err()
+    {
       return Ok(self.get_snapshot().await);
     }
 
@@ -2987,13 +3004,17 @@ impl SessionManager {
       };
 
       // The YAML may change while the page waits for its first paint or profile check.
-      if locked.warm_pool.get(&key).is_none_or(|entry| entry.view_instance_id != view_instance_id) {
+      if locked
+        .warm_pool
+        .get(&key)
+        .is_none_or(|entry| entry.view_instance_id != view_instance_id)
+      {
         return;
       }
       if let Err(error) = acc.validated_proxy() {
-        if let Some((entry, is_foreground)) = Self::interrupt_desktop_view(
-          &mut locked, &key, view_instance_id, error,
-        ) {
+        if let Some((entry, is_foreground)) =
+          Self::interrupt_desktop_view(&mut locked, &key, view_instance_id, error)
+        {
           Self::close_warm_entry(app, entry);
           if is_foreground {
             self.active_view_id.store(0, Ordering::SeqCst);
@@ -3227,7 +3248,9 @@ impl SessionManager {
       return Ok(());
     }
 
-    self.validate_pool_view(app, &account, &key, view_instance_id).await?;
+    self
+      .validate_pool_view(app, &account, &key, view_instance_id)
+      .await?;
 
     let entry_url: Url = get_provider(account.provider_id)
       .info
@@ -3815,15 +3838,17 @@ impl SessionManager {
           && stored.uuid == key.uuid
           && stored.same_proxy_configuration(account)
       });
-      let same_view = locked.warm_pool.get(key)
+      let same_view = locked
+        .warm_pool
+        .get(key)
         .is_some_and(|entry| entry.view_instance_id == view_instance_id);
       if !same_config || !same_view {
         return Err("账号代理配置已更新，已停止旧视图操作".to_string());
       }
       if let Err(error) = &result {
-        if let Some((entry, is_foreground)) = Self::interrupt_desktop_view(
-          &mut locked, key, view_instance_id, error.clone(),
-        ) {
+        if let Some((entry, is_foreground)) =
+          Self::interrupt_desktop_view(&mut locked, key, view_instance_id, error.clone())
+        {
           Self::close_warm_entry(app, entry);
           if is_foreground {
             self.active_view_id.store(0, Ordering::SeqCst);
@@ -3939,7 +3964,11 @@ impl SessionManager {
           } else {
             locked.warm_pool.get(&key).and_then(|e| {
               if e.view_instance_id == view_instance_id && e.alive_flag.load(Ordering::SeqCst) {
-                Some((e.webview_label.clone(), e.popup_label.clone(), e.paint_ready))
+                Some((
+                  e.webview_label.clone(),
+                  e.popup_label.clone(),
+                  e.paint_ready,
+                ))
               } else {
                 None
               }
@@ -4532,10 +4561,14 @@ mod network_state_tests {
     entry.paint_ready = false;
     entry.watcher_running = false;
 
-    assert!(SessionManager::mark_desktop_watcher_running(&mut state, &a, 1));
+    assert!(SessionManager::mark_desktop_watcher_running(
+      &mut state, &a, 1
+    ));
     assert!(!state.warm_pool[&a].paint_ready);
     assert!(state.warm_pool[&a].watcher_running);
-    assert!(!SessionManager::mark_desktop_watcher_running(&mut state, &a, 1));
+    assert!(!SessionManager::mark_desktop_watcher_running(
+      &mut state, &a, 1
+    ));
     assert_eq!(state.active_slot.as_ref().unwrap().account_key, b);
   }
 
@@ -4546,10 +4579,16 @@ mod network_state_tests {
     entry.paint_ready = false;
     entry.watcher_running = false;
 
-    assert!(!SessionManager::mark_desktop_watcher_running(&mut state, &a, 3));
+    assert!(!SessionManager::mark_desktop_watcher_running(
+      &mut state, &a, 3
+    ));
     assert!(!state.warm_pool[&a].watcher_running);
-    state.warm_pool[&a].alive_flag.store(false, Ordering::SeqCst);
-    assert!(!SessionManager::mark_desktop_watcher_running(&mut state, &a, 1));
+    state.warm_pool[&a]
+      .alive_flag
+      .store(false, Ordering::SeqCst);
+    assert!(!SessionManager::mark_desktop_watcher_running(
+      &mut state, &a, 1
+    ));
     assert!(!state.warm_pool[&a].watcher_running);
   }
 

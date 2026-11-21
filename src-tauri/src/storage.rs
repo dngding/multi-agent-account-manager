@@ -305,7 +305,8 @@ mod tests {
       "label": "Synthetic A"
     });
     for field in ["proxyPoolBinding", "proxy_pool_binding"] {
-      let mut entry = serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
+      let mut entry =
+        serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
       entry.as_object_mut().unwrap().remove("proxyPoolBinding");
       entry[field] = binding.clone();
       let (store, _) = migrate_from_value(json!({"version": 2, "accounts": [entry]})).unwrap();
@@ -313,16 +314,28 @@ mod tests {
       assert_eq!(saved["accounts"][0]["proxyPoolBinding"], binding);
       let deserialized: AccountsStoreFile = serde_json::from_value(saved.clone()).unwrap();
       let (reloaded, _) = migrate_from_value(saved).unwrap();
-      assert_eq!(deserialized.accounts[0].proxy_pool_binding, store.accounts[0].proxy_pool_binding);
-      assert_eq!(reloaded.accounts[0].proxy_pool_binding, store.accounts[0].proxy_pool_binding);
+      assert_eq!(
+        deserialized.accounts[0].proxy_pool_binding,
+        store.accounts[0].proxy_pool_binding
+      );
+      assert_eq!(
+        reloaded.accounts[0].proxy_pool_binding,
+        store.accounts[0].proxy_pool_binding
+      );
     }
   }
 
   #[test]
   fn malformed_pool_binding_is_not_silently_detached() {
     for field in ["proxyPoolBinding", "proxy_pool_binding"] {
-      for invalid in [json!(false), json!("binding"), json!({}), json!({"entryId": "socks5:7900"})] {
-        let mut entry = serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
+      for invalid in [
+        json!(false),
+        json!("binding"),
+        json!({}),
+        json!({"entryId": "socks5:7900"}),
+      ] {
+        let mut entry =
+          serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
         entry.as_object_mut().unwrap().remove("proxyPoolBinding");
         entry[field] = invalid;
         assert!(migrate_from_value(json!({"version": 2, "accounts": [entry]})).is_err());

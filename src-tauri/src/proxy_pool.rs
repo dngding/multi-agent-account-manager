@@ -101,10 +101,9 @@ impl ProxyPool {
       version: 1,
       source_path: path_text(&source)?,
     };
-    let bytes = serde_json::to_vec(&selection)
-      .map_err(|_| "无法保存本应用的代理池来源选择".to_string())?;
-    fs::create_dir_all(&self.data_dir)
-      .map_err(|_| "无法创建本应用的代理池设置目录".to_string())?;
+    let bytes =
+      serde_json::to_vec(&selection).map_err(|_| "无法保存本应用的代理池来源选择".to_string())?;
+    fs::create_dir_all(&self.data_dir).map_err(|_| "无法创建本应用的代理池设置目录".to_string())?;
     let temporary = self
       .data_dir
       .join(format!(".proxy-pool-source-{}.tmp", uuid::Uuid::new_v4()));
@@ -156,8 +155,7 @@ impl ProxyPool {
       snapshot.source_path = Some(path_text(&source)?);
       snapshot.entries = read_entries(&source)?;
       snapshot.revision = fingerprint(
-        &serde_json::to_value(&snapshot.entries)
-          .map_err(|_| "无法生成代理池状态".to_string())?,
+        &serde_json::to_value(&snapshot.entries).map_err(|_| "无法生成代理池状态".to_string())?,
       );
       Ok(())
     })();
@@ -258,8 +256,8 @@ fn normalized_source(path: &Path) -> Result<PathBuf, String> {
   if !is_local_absolute_source(path) {
     return Err("代理池来源必须是本机 YAML 文件的绝对路径".to_string());
   }
-  let canonical = fs::canonicalize(path)
-    .map_err(|_| "代理池来源不存在或不可读取，请重新选择来源".to_string())?;
+  let canonical =
+    fs::canonicalize(path).map_err(|_| "代理池来源不存在或不可读取，请重新选择来源".to_string())?;
   // Local paths can resolve through reparse points. Normal Windows canonical paths
   // have a VerbatimDisk prefix, which remains valid; UNC/device targets do not.
   if !is_local_absolute_source(&canonical) {
@@ -410,8 +408,8 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<ProxyPoolEntry>, String> {
     let listener = listener
       .as_object()
       .ok_or_else(|| "代理池入口结构无效".to_string())?;
-    let port = port_number(listener.get("port"))
-      .ok_or_else(|| "代理池入口端口缺失或无效".to_string())?;
+    let port =
+      port_number(listener.get("port")).ok_or_else(|| "代理池入口端口缺失或无效".to_string())?;
     // Even an unsupported listener can conflict with a candidate's socket binding.
     if !ports.insert(port) {
       return Err("代理池存在重复入口端口，无法确认唯一绑定".to_string());
@@ -526,9 +524,16 @@ fn static_node(node: &Value) -> bool {
   ) {
     return false;
   }
-  if ["dialer-proxy", "proxy", "detour", "use", "proxies", "proxy-providers"]
-    .iter()
-    .any(|field| node.get(*field).is_some_and(|value| !value.is_null()))
+  if [
+    "dialer-proxy",
+    "proxy",
+    "detour",
+    "use",
+    "proxies",
+    "proxy-providers",
+  ]
+  .iter()
+  .any(|field| node.get(*field).is_some_and(|value| !value.is_null()))
   {
     return false;
   }
@@ -554,7 +559,12 @@ fn local_listener_host(value: Option<&Value>) -> Option<String> {
     .ok()?;
   if address.is_unspecified() {
     return Some(
-      if address.is_ipv4() { "127.0.0.1" } else { "[::1]" }.to_string(),
+      if address.is_ipv4() {
+        "127.0.0.1"
+      } else {
+        "[::1]"
+      }
+      .to_string(),
     );
   }
   if !address.is_loopback() {
@@ -591,7 +601,8 @@ fn normalize_endpoint(raw: &str) -> Result<String, String> {
   {
     return Err("代理池绑定不能使用通配监听地址".to_string());
   }
-  url.set_host(Some(&normalized))
+  url
+    .set_host(Some(&normalized))
     .map_err(|_| "代理池绑定主机无效".to_string())?;
   url.set_path("/");
   Ok(url.to_string())
@@ -642,7 +653,9 @@ fn fingerprint(value: &Value) -> String {
         }
         output.push(b'}');
       }
-      _ => output.extend(serde_json::to_vec(value).expect("bounded YAML contains only JSON values")),
+      _ => {
+        output.extend(serde_json::to_vec(value).expect("bounded YAML contains only JSON values"))
+      }
     }
   }
   let mut bytes = Vec::new();
@@ -784,7 +797,11 @@ mod tests {
   #[cfg(windows)]
   #[test]
   fn source_paths_accept_local_disks_and_reject_unc_devices_and_relative_paths() {
-    for path in [r"C:\pool\sidecar.yaml", r"\\?\C:\pool\sidecar.yaml", "C:/pool/sidecar.yaml"] {
+    for path in [
+      r"C:\pool\sidecar.yaml",
+      r"\\?\C:\pool\sidecar.yaml",
+      "C:/pool/sidecar.yaml",
+    ] {
       assert!(is_local_absolute_source(Path::new(path)), "{path}");
     }
     for path in [
@@ -817,8 +834,12 @@ mod tests {
     let entries = parse_entries(yaml.as_bytes()).unwrap();
     assert_eq!(entries.len(), 3);
     assert!(entries.iter().all(|entry| entry.duplicate_count == 3));
-    assert!(entries.iter().any(|entry| entry.proxy_url == "socks5://127.0.0.1:18081/"));
-    assert!(entries.iter().any(|entry| entry.proxy_url == "http://[::1]:18083/"));
+    assert!(entries
+      .iter()
+      .any(|entry| entry.proxy_url == "socks5://127.0.0.1:18081/"));
+    assert!(entries
+      .iter()
+      .any(|entry| entry.proxy_url == "http://[::1]:18083/"));
     let serialized = serde_json::to_string(&entries).unwrap();
     assert!(!serialized.contains("synthetic-test-secret"));
     assert!(!serialized.contains("example.invalid"));
@@ -828,7 +849,10 @@ mod tests {
   fn rejects_ambiguous_ports_names_and_duplicate_yaml_fields() {
     let duplicate_port = source(&format!("{}\n{}", one_listener(), one_listener()));
     assert!(parse_entries(duplicate_port.as_bytes()).is_err());
-    let duplicate_name = format!("proxies:\n  - {NODE}\n  - {NODE}\nlisteners:\n{}", one_listener());
+    let duplicate_name = format!(
+      "proxies:\n  - {NODE}\n  - {NODE}\nlisteners:\n{}",
+      one_listener()
+    );
     assert!(parse_entries(duplicate_name.as_bytes()).is_err());
     assert!(parse_entries(b"proxies: []\nproxies: []\nlisteners: []").is_err());
   }
@@ -840,9 +864,17 @@ mod tests {
       ("proxy: fixed-a", "proxy: DIRECT"),
       ("proxy: fixed-a", "proxy: missing-node"),
       ("type: socks", "type: unknown"),
-      ("proxy: fixed-a}", "proxy: fixed-a, users: [{username: test, password: private}]}"),
+      (
+        "proxy: fixed-a}",
+        "proxy: fixed-a, users: [{username: test, password: private}]}",
+      ),
     ] {
-      assert!(parse_entries(source(one_listener()).replace(change.0, change.1).as_bytes()).is_err());
+      assert!(parse_entries(
+        source(one_listener())
+          .replace(change.0, change.1)
+          .as_bytes()
+      )
+      .is_err());
     }
     for extra in [
       "authentication: ['test:private']\n",
@@ -850,19 +882,29 @@ mod tests {
     ] {
       assert!(parse_entries(format!("{extra}{}", source(one_listener())).as_bytes()).is_err());
     }
-    assert!(parse_entries(source(one_listener()).replace("cipher: aes-128-gcm", "dialer-proxy: auto-group").as_bytes()).is_err());
+    assert!(parse_entries(
+      source(one_listener())
+        .replace("cipher: aes-128-gcm", "dialer-proxy: auto-group")
+        .as_bytes()
+    )
+    .is_err());
   }
 
   #[test]
   fn canonical_hash_ignores_mapping_order_but_tracks_nested_secret_changes() {
     let first = serde_json::json!({"a": {"password": "one", "enabled": true}, "b": [1, 2]});
-    let reordered = serde_json::from_str::<Value>(r#"{"b":[1,2],"a":{"enabled":true,"password":"one"}}"#).unwrap();
+    let reordered =
+      serde_json::from_str::<Value>(r#"{"b":[1,2],"a":{"enabled":true,"password":"one"}}"#)
+        .unwrap();
     let changed = serde_json::json!({"a": {"password": "two", "enabled": true}, "b": [1, 2]});
     assert_eq!(fingerprint(&first), fingerprint(&reordered));
     assert_ne!(fingerprint(&first), fingerprint(&changed));
-    assert_ne!(fingerprint(&first), fingerprint(&serde_json::json!({
-      "a": {"password": "one", "enabled": true}, "b": [2, 1]
-    })));
+    assert_ne!(
+      fingerprint(&first),
+      fingerprint(&serde_json::json!({
+        "a": {"password": "one", "enabled": true}, "b": [2, 1]
+      }))
+    );
   }
 
   #[test]
@@ -894,7 +936,14 @@ mod tests {
     let path = directory.write_source(&yaml);
     let entry = parse_entries(yaml.as_bytes()).unwrap().remove(0);
     let saved = binding(&path, &entry);
-    fs::write(&path, format!("# harmless comment\n{}", yaml.replace("local-a", "local-renamed"))).unwrap();
+    fs::write(
+      &path,
+      format!(
+        "# harmless comment\n{}",
+        yaml.replace("local-a", "local-renamed")
+      ),
+    )
+    .unwrap();
     let fresh = validate_binding_with_override("socks5://localhost:18081", &saved, None).unwrap();
     assert_eq!(fresh.fingerprint, saved.fingerprint);
     assert_ne!(fresh.label, saved.label);
@@ -917,11 +966,18 @@ mod tests {
   #[test]
   fn enforces_file_depth_and_alias_expansion_limits() {
     assert!(parse_entries(&vec![b' '; MAX_SOURCE_BYTES + 1]).is_err());
-    let deep = format!("{}0{}", "[".repeat(MAX_YAML_DEPTH + 5), "]".repeat(MAX_YAML_DEPTH + 5));
+    let deep = format!(
+      "{}0{}",
+      "[".repeat(MAX_YAML_DEPTH + 5),
+      "]".repeat(MAX_YAML_DEPTH + 5)
+    );
     assert!(parse_entries(deep.as_bytes()).is_err());
     let mut aliases = "a: &a [0,0,0,0,0,0,0,0,0,0]\n".to_string();
     for (name, previous) in [('b', 'a'), ('c', 'b'), ('d', 'c'), ('e', 'd'), ('f', 'e')] {
-      aliases.push_str(&format!("{name}: &{name} [{}]\n", vec![format!("*{previous}"); 10].join(",")));
+      aliases.push_str(&format!(
+        "{name}: &{name} [{}]\n",
+        vec![format!("*{previous}"); 10].join(",")
+      ));
     }
     assert!(parse_entries(aliases.as_bytes()).is_err());
   }
@@ -929,8 +985,16 @@ mod tests {
   #[test]
   fn discovery_is_one_level_and_multiple_sources_never_auto_select() {
     let directory = TestDirectory::new();
-    for name in ["2026-11-21-10-20-30", "2026-11-22", "other/deeper/2026-11-23"] {
-      let path = directory.0.join("WorkBuddy").join(name).join("telegram-panel/flclash-sidecar");
+    for name in [
+      "2026-11-21-10-20-30",
+      "2026-11-22",
+      "other/deeper/2026-11-23",
+    ] {
+      let path = directory
+        .0
+        .join("WorkBuddy")
+        .join(name)
+        .join("telegram-panel/flclash-sidecar");
       fs::create_dir_all(&path).unwrap();
       fs::write(path.join("sidecar.yaml"), source(one_listener())).unwrap();
     }
@@ -950,7 +1014,11 @@ mod tests {
     let path = directory.write_source(&source(one_listener()));
     let pool = ProxyPool::new(directory.0.join("app-data"));
     pool.save_source(path.to_str().unwrap()).unwrap();
-    for invalid in [OsString::from(""), OsString::from("relative.yaml"), directory.0.join("missing.yaml").into_os_string()] {
+    for invalid in [
+      OsString::from(""),
+      OsString::from("relative.yaml"),
+      directory.0.join("missing.yaml").into_os_string(),
+    ] {
       let snapshot = pool.snapshot_with_environment(Some(invalid), Some(directory.0.clone()));
       assert!(snapshot.entries.is_empty());
       assert!(snapshot.discovered_sources.is_empty());
@@ -967,9 +1035,24 @@ mod tests {
     let source_b = second.write_source(&yaml);
     let entry = parse_entries(yaml.as_bytes()).unwrap().remove(0);
     let saved = binding(&source_a, &entry);
-    assert!(validate_binding_with_override(&entry.proxy_url, &saved, Some(source_a.into_os_string())).is_ok());
-    assert!(validate_binding_with_override(&entry.proxy_url, &saved, Some(source_b.into_os_string())).is_err());
-    assert!(validate_binding_with_override(&entry.proxy_url, &saved, Some(OsString::from("missing-relative.yaml"))).is_err());
+    assert!(validate_binding_with_override(
+      &entry.proxy_url,
+      &saved,
+      Some(source_a.into_os_string())
+    )
+    .is_ok());
+    assert!(validate_binding_with_override(
+      &entry.proxy_url,
+      &saved,
+      Some(source_b.into_os_string())
+    )
+    .is_err());
+    assert!(validate_binding_with_override(
+      &entry.proxy_url,
+      &saved,
+      Some(OsString::from("missing-relative.yaml"))
+    )
+    .is_err());
   }
 
   #[test]
