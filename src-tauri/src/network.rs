@@ -13,7 +13,7 @@ pub fn parse_account_proxy(raw: &str) -> Result<Option<Url>, String> {
     return Ok(None);
   }
 
-  let url = Url::parse(value).map_err(|_| "代理地址格式错误".to_string())?;
+  let mut url = Url::parse(value).map_err(|_| "代理地址格式错误".to_string())?;
   if !matches!(url.scheme(), "http" | "socks5") {
     return Err("代理协议只支持 http:// 或 socks5://".to_string());
   }
@@ -23,8 +23,14 @@ pub fn parse_account_proxy(raw: &str) -> Result<Option<Url>, String> {
   if !url.username().is_empty() || url.password().is_some() {
     return Err("为避免明文保存凭据，暂不支持在代理地址中填写用户名或密码".to_string());
   }
-  if url.path() != "/" || url.query().is_some() || url.fragment().is_some() {
+  if (!url.path().is_empty() && url.path() != "/")
+    || url.query().is_some()
+    || url.fragment().is_some()
+  {
     return Err("代理地址只能填写协议、主机和端口".to_string());
+  }
+  if url.path().is_empty() {
+    url.set_path("/");
   }
 
   Ok(Some(url))
