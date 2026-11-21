@@ -14,7 +14,7 @@
 | **Hark** | 已启用 | 独立会话隔离、额度与余额同步 |
 
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
-- **Windows 按账号代理（开发中）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。当前源码新增“仅保存 / 检查并打开”流程：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。本轮改动的 Windows Rust CI 和实机验收尚待完成。提交 `86679ef` 的两个未登录 profile 已通过本地 HTTP 代理断线、阻止重开、恢复和重启实测，见[历史验收记录](docs/windows-proxy-acceptance-results-2026-11-21.md)。界面中的代理正常状态仅表示有限握手检查，不代表公网出口、DNS / WebRTC 或系统级断线拒绝直连已验证，也不代表设备或账号关系隔离。
+- **Windows 按账号代理（功能分支）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。新增支持“仅保存 / 检查并打开”：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。最终源码 `4dce77d` 的 Windows Rust 测试 23/23、独立 EXE 和 NSIS 构建通过；两个未登录测试账号已完成新增流程、后台中断状态更新，以及最终版清空代理、阻止重开和重启恢复回归，见[本轮验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。界面“预检通过”仅表示有限握手检查，不代表公网出口、DNS / WebRTC、系统级拒绝直连、设备或账号关系隔离已验证。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
 - **应用内检查更新**：支持在客户端内检查 GitHub Releases 最新版本、带进度条下载、`SHA-256` 校验及覆盖更新。
 
@@ -53,7 +53,7 @@
 
 Windows 按账号代理增强在用户 fork 的 `codex/windows-account-proxy` 功能分支开发。进入 [dngding 仓库的 Windows CI](https://github.com/dngding/multi-agent-account-manager/actions/workflows/windows-ci.yml?query=branch%3Acodex%2Fwindows-account-proxy)，选择该分支中**源码提交匹配、构建成功**的运行，在页面底部下载 `windows-x64-nsis-acceptance` artifact。它包含独立 EXE 和 NSIS 安装器；下载 artifact 通常需要登录 GitHub。
 
-先按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)使用独立 EXE 和全新测试数据目录验证，再决定是否安装。不要用旧提交的成功构建代替本轮改动的 CI 或实机验收。
+本轮构建来自 [4dce77d 的成功 CI](https://github.com/dngding/multi-agent-account-manager/actions/runs/44915899771)，测试范围和文件哈希见[验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。首次使用仍建议按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)，用独立 EXE 和全新测试数据目录检查自己的代理链路，再用于正式账号。
 
 机场订阅接入和固定账号端口配置见[机场订阅 → Mihomo 配置指引](docs/airport-subscription-proxy-setup.md)。订阅链接先由代理客户端解析，叠号只接收固定 HTTP / SOCKS5 代理端口。
 
