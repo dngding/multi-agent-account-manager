@@ -1,5 +1,5 @@
-mod platform;
 mod network;
+mod platform;
 mod providers;
 mod session_manager;
 mod storage;
@@ -158,13 +158,15 @@ pub fn run() {
           .min_inner_size(760.0, 520.0)
           .build()?;
 
-        let manager_builder =
-          tauri::webview::WebviewBuilder::new("manager", tauri::WebviewUrl::App("index.html".into()))
-            .on_navigation(|url| {
-              url.scheme() == "tauri"
-                || url.domain() == Some("tauri.localhost")
-                || (cfg!(dev) && url.host_str() == Some("localhost"))
-            });
+        let manager_builder = tauri::webview::WebviewBuilder::new(
+          "manager",
+          tauri::WebviewUrl::App("index.html".into()),
+        )
+        .on_navigation(|url| {
+          url.scheme() == "tauri"
+            || url.domain() == Some("tauri.localhost")
+            || (cfg!(dev) && url.host_str() == Some("localhost"))
+        });
 
         main_window.add_child(
           manager_builder,
