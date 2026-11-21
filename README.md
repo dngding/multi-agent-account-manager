@@ -4,6 +4,8 @@
 
 基于 Tauri 2 构建的跨平台（macOS / Windows / Android）AI 助手多账号隔离与快速切换工具，安装后应用名称为 **叠号**。
 
+> **来源说明**：本仓库 fork 自 [ldjx7/multi-agent-account-manager](https://github.com/ldjx7/multi-agent-account-manager)，并在此基础上开发 Windows 按账号代理功能。原始项目及贡献者的版权归其作者所有，本项目继续采用 [Apache-2.0](LICENSE) 许可。当前分支是独立修改，不代表上游维护者认可、背书或发布。
+
 ## 支持服务与核心特性
 
 | 服务 | 状态 | 说明 |
