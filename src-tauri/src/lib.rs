@@ -1,4 +1,5 @@
 mod platform;
+mod network;
 mod providers;
 mod session_manager;
 mod storage;
@@ -42,6 +43,19 @@ async fn rename_account(
   alias: String,
 ) -> Result<ManagerSnapshot, String> {
   mgr.rename_account(&app, &provider_id, &uuid, &alias).await
+}
+
+#[tauri::command]
+async fn set_account_proxy(
+  app: AppHandle,
+  mgr: State<'_, Arc<SessionManager>>,
+  provider_id: String,
+  uuid: String,
+  proxy_url: String,
+) -> Result<ManagerSnapshot, String> {
+  mgr
+    .set_account_proxy(&app, &provider_id, &uuid, &proxy_url)
+    .await
 }
 
 #[tauri::command]
@@ -203,6 +217,7 @@ pub fn run() {
       select_provider,
       add_account,
       rename_account,
+      set_account_proxy,
       remove_account,
       switch_account,
       set_modal_active,

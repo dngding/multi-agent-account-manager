@@ -40,6 +40,7 @@ export interface AccountRecord {
   quotaPercent: number | null;
   quotaDetail: QuotaDetail | null;
   authState: AuthState;
+  proxyUrl: string | null;
 }
 
 export interface ConflictItem {

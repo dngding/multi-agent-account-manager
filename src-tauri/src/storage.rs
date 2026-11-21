@@ -66,6 +66,8 @@ pub struct AccountRecord {
   pub quota_detail: Option<QuotaDetail>,
   #[serde(default)]
   pub auth_state: AuthState,
+  #[serde(default)]
+  pub proxy_url: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -254,6 +256,13 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
         quota_percent,
         quota_detail,
         auth_state,
+        proxy_url: item_obj
+          .get("proxyUrl")
+          .or_else(|| item_obj.get("proxy_url"))
+          .and_then(|v| v.as_str())
+          .map(str::trim)
+          .filter(|value| !value.is_empty())
+          .map(str::to_string),
       });
     }
   }

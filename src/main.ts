@@ -17,6 +17,7 @@ type ModalMode =
   | { kind: "none" }
   | { kind: "add"; providerId: ProviderId; draft: string }
   | { kind: "rename"; account: AccountRecord; draft: string }
+  | { kind: "proxy"; account: AccountRecord; draft: string }
   | { kind: "remove"; account: AccountRecord }
   | { kind: "update" };
 
@@ -29,6 +30,7 @@ const ICON_EXTERNAL = `<svg width="14" height="14" viewBox="0 0 24 24" fill="non
 const ICON_REFRESH = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>`;
 const ICON_EDIT = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>`;
 const ICON_TRASH = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`;
+const ICON_NETWORK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`;
 const ICON_USER_PLUS = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg>`;
 const ICON_UPDATE = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
 
@@ -418,6 +420,10 @@ async function setModal(next: ModalMode): Promise<void> {
     }
   } else if (next.kind === "remove") {
     document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.focus();
+  } else if (next.kind === "proxy") {
+    const input = document.querySelector<HTMLInputElement>("#modal-proxy-input");
+    input?.focus();
+    input?.select();
   }
 }
 
@@ -602,6 +608,22 @@ function renderModal(provider: ProviderInfo): string {
       </div>
     `;
   }
+  if (modal.kind === "proxy") {
+    return `
+      <div class="inline-modal" role="dialog" aria-modal="true">
+        <div class="modal-card">
+          <div class="modal-title">配置「${escapeHtml(modal.account.alias)}」的独立代理</div>
+          <div class="modal-desc">Windows 桌面版支持为此账号的 WebView 和登录弹窗绑定 HTTP 或 SOCKS5 代理。此处只保存代理地址，不支持在地址中填写用户名或密码。留空会清除独立代理绑定，网络行为回到系统默认设置。</div>
+          <input id="modal-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:8080 或 socks5://127.0.0.1:1080" value="${escapeHtml(modal.draft)}" />
+          <div class="modal-desc">保存后会重建该账号会话。当前不会检查代理出口 IP、DNS / WebRTC 泄漏或断线直连；配置代理不等于已验证网络隔离，也不提供设备指纹或账号关系隔离。</div>
+          <div class="modal-footer">
+            <button id="modal-cancel-btn" class="btn" type="button">取消</button>
+            <button id="modal-confirm-btn" class="btn primary" type="button">保存并应用</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
   return `
     <div class="inline-modal" role="dialog" aria-modal="true">
       <div class="modal-card">
@@ -620,6 +642,7 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
   const providerAccounts = state.accounts.filter((a) => a.providerId === provider.id);
   const switchingKey = effectiveSwitchingKey(state);
   const isAndroid = state.platform === "android";
+  const supportsAccountProxy = state.platform === "windows";
 
   const noticeHtml = state.notice
     ? `
@@ -774,11 +797,13 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                   <span class="account-alias">${escapeHtml(acc.alias)}</span>
                   ${shortcutHint}
                   ${alertBadgeHtml}
+                  ${supportsAccountProxy ? `<span class="proxy-status ${acc.proxyUrl ? "configured" : "direct"}">${acc.proxyUrl ? "代理已配置 · 未验证" : "未配置独立代理"}</span>` : ""}
                 </div>
                 ${compactSubHtml}
               </div>
               <div class="row-ops">
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
+                ${supportsAccountProxy ? `<button class="action-icon-btn proxy-action ${acc.proxyUrl ? "configured" : ""}" data-proxy-uuid="${escapeHtml(acc.uuid)}" title="${acc.proxyUrl ? "已配置独立代理（出口未验证）" : "配置独立代理"}" type="button">${ICON_NETWORK}</button>` : ""}
                 <button class="action-icon-btn danger" data-remove-uuid="${escapeHtml(acc.uuid)}" title="从本机移除" type="button">${ICON_TRASH}</button>
               </div>
             </div>
@@ -1020,6 +1045,17 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
     });
   });
 
+  document.querySelectorAll<HTMLElement>("[data-proxy-uuid]").forEach((btn) => {
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const uuid = btn.dataset.proxyUuid;
+      const acc = state.accounts.find((a) => a.providerId === provider.id && a.uuid === uuid);
+      if (acc) {
+        await setModal({ kind: "proxy", account: acc, draft: acc.proxyUrl ?? "" });
+      }
+    });
+  });
+
   document.querySelectorAll<HTMLElement>("[data-remove-uuid]").forEach((btn) => {
     btn.addEventListener("click", async (ev) => {
       ev.stopPropagation();
@@ -1070,6 +1106,20 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
     }
   });
 
+  const proxyInput = document.querySelector<HTMLInputElement>("#modal-proxy-input");
+  proxyInput?.addEventListener("input", () => {
+    if (modal.kind === "proxy") modal.draft = proxyInput.value;
+  });
+  proxyInput?.addEventListener("keydown", async (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.click();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      await setModal({ kind: "none" });
+    }
+  });
+
   document.querySelector("#modal-cancel-btn")?.addEventListener("click", async () => {
     if (modal.kind === "update" && updateState.installing) return;
     await setModal({ kind: "none" });
@@ -1092,6 +1142,15 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
         providerId: currentModal.account.providerId,
         uuid: currentModal.account.uuid,
         alias,
+      });
+    } else if (currentModal.kind === "proxy") {
+      if (busy) return;
+      const proxyUrl = currentModal.draft.trim();
+      await setModal({ kind: "none" });
+      await callCommand("set_account_proxy", {
+        providerId: currentModal.account.providerId,
+        uuid: currentModal.account.uuid,
+        proxyUrl,
       });
     } else if (currentModal.kind === "remove") {
       await setModal({ kind: "none" });

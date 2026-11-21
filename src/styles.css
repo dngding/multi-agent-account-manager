@@ -898,6 +898,30 @@ body,
   opacity: 1;
 }
 
+.proxy-status {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 6px;
+  font-size: 10px;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.proxy-status.direct {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.proxy-status.configured {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.proxy-action.configured {
+  color: #2563eb;
+}
+
 @media (hover: none) {
   .row-ops {
     opacity: 1;

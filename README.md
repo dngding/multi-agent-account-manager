@@ -12,6 +12,7 @@
 | **Hark** | 已启用 | 独立会话隔离、额度与余额同步 |
 
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
+- **Windows 按账号代理（开发中）**：可为账号 WebView 与登录弹窗分别配置 HTTP / SOCKS5 代理。状态仅表示已配置；代理出口、DNS / WebRTC 泄漏和代理断开后的直连行为尚未验证，此能力不代表设备或账号关系隔离。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
 - **应用内检查更新**：支持在客户端内检查 GitHub Releases 最新版本、带进度条下载、`SHA-256` 校验及覆盖更新。
 
@@ -117,6 +118,8 @@
 ---
 
 ## 本地开发
+
+Windows 多账号隔离增强的设计范围、当前实现状态及后续网络 fail-closed 验收见[开发指引](docs/muse-multi-account-isolation-development-guide.md)。
 
 环境要求：Node.js 22+、Rust 1.85+，Android 构建需额外配置 Android SDK 与 NDK 26+。
 

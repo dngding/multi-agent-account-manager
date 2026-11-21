@@ -11,6 +11,7 @@
     "allow-select-provider",
     "allow-add-account",
     "allow-rename-account",
+    "allow-set-account-proxy",
     "allow-remove-account",
     "allow-switch-account",
     "allow-set-modal-active",

@@ -1441,6 +1441,7 @@ impl SessionManager {
         quota_percent: None,
         quota_detail: None,
         auth_state: AuthState::LoggedOut,
+        proxy_url: None,
       });
       save_store_atomic(&locked.store_path, &locked.store)?;
       locked.selected_provider_id = provider_id;
@@ -1490,6 +1491,91 @@ impl SessionManager {
     }
 
     Ok(Self::snapshot_from_locked(&locked))
+  }
+
+  #[cfg(windows)]
+  pub async fn set_account_proxy(
+    &self,
+    app: &AppHandle,
+    raw_provider: &str,
+    raw_uuid: &str,
+    raw_proxy_url: &str,
+  ) -> Result<ManagerSnapshot, String> {
+    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
+    let proxy_url = crate::network::parse_account_proxy(raw_proxy_url)?;
+    let key = AccountKey {
+      provider_id,
+      uuid: uuid.clone(),
+    };
+
+    let (active_matches, should_wait) = {
+      let mut locked = self.inner.lock().await;
+      if !locked.conflicts.is_empty() {
+        return Err("请先处理 UUID 归属冲突后再修改代理".to_string());
+      }
+
+      let account_index = locked
+        .store
+        .accounts
+        .iter()
+        .position(|account| account.provider_id == provider_id && account.uuid == uuid)
+        .ok_or_else(|| "未找到匹配的账号记录，拒绝跨服务修改代理".to_string())?;
+      let normalized_proxy = proxy_url.as_ref().map(|url| url.to_string());
+      if locked.store.accounts[account_index].proxy_url == normalized_proxy {
+        return Ok(Self::snapshot_from_locked(&locked));
+      }
+      let previous_proxy = std::mem::replace(
+        &mut locked.store.accounts[account_index].proxy_url,
+        normalized_proxy,
+      );
+      if let Err(error) = save_store_atomic(&locked.store_path, &locked.store) {
+        locked.store.accounts[account_index].proxy_url = previous_proxy;
+        return Err(error);
+      }
+
+      let active_matches = locked
+        .active_slot
+        .as_ref()
+        .map(|slot| slot.account_key == key)
+        .unwrap_or(false);
+      if active_matches {
+        let next_seq = self.current_seq.fetch_add(1, Ordering::SeqCst) + 1;
+        self.hide_foreground_slot(app, next_seq, &mut locked).await;
+      } else if locked.active_slot.is_none() {
+        // Invalidate a cold open that has selected this account but has not
+        // inserted its WebView into the warm pool yet.
+        self.current_seq.fetch_add(1, Ordering::SeqCst);
+      }
+
+      let should_wait = if let Some(entry) = locked.warm_pool.remove(&key) {
+        Self::close_warm_entry(app, entry);
+        Self::apply_desktop_layout_locked(app, &locked);
+        true
+      } else {
+        false
+      };
+      (active_matches, should_wait)
+    };
+
+    if should_wait {
+      tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    }
+    if active_matches {
+      return self.switch_account(app, provider_id.as_str(), &uuid).await;
+    }
+    Ok(self.get_snapshot().await)
+  }
+
+  #[cfg(not(windows))]
+  pub async fn set_account_proxy(
+    &self,
+    _app: &AppHandle,
+    _raw_provider: &str,
+    _raw_uuid: &str,
+    _raw_proxy_url: &str,
+  ) -> Result<ManagerSnapshot, String> {
+    Err("每账号独立代理目前仅支持 Windows 桌面版".to_string())
   }
 
   pub async fn remove_account(
@@ -1989,6 +2075,7 @@ impl SessionManager {
     key: AccountKey,
     parsed_uuid: Uuid,
     profile_dir: &std::path::Path,
+    proxy_url: Option<Url>,
     webview_label: &str,
     view_instance_id: u64,
     allow_blank: Arc<AtomicBool>,
@@ -2007,6 +2094,8 @@ impl SessionManager {
     let app_for_popup = app.clone();
     let key_for_popup = key.clone();
     let popup_counter = Arc::new(AtomicU64::new(1));
+    #[cfg(windows)]
+    let proxy_url_popup = proxy_url.clone();
 
     let alive_load = Arc::clone(&alive_flag);
     let mgr_for_load = Arc::clone(self);
@@ -2090,8 +2179,14 @@ impl SessionManager {
       )
       .window_features(features)
       .initialization_script(LOGIN_CAPTURE_INIT_JS)
-      .title(&popup_title)
-      .on_navigation(move |nav_url| {
+      .title(&popup_title);
+      #[cfg(windows)]
+      let popup_builder = if let Some(proxy_url) = proxy_url_popup.clone() {
+        popup_builder.proxy_url(proxy_url)
+      } else {
+        popup_builder
+      };
+      let popup_builder = popup_builder.on_navigation(move |nav_url| {
         if !alive_popup_nav.load(Ordering::SeqCst)
           || active_vid_popup_nav.load(Ordering::SeqCst) != view_instance_id
         {
@@ -2180,6 +2275,14 @@ impl SessionManager {
       builder = builder.data_directory(profile_dir.to_path_buf());
     }
 
+    #[cfg(windows)]
+    if let Some(proxy_url) = proxy_url {
+      builder = builder.proxy_url(proxy_url);
+    }
+
+    #[cfg(not(windows))]
+    let _ = proxy_url;
+
     if provider_id == ProviderId::Hark {
       builder = builder.background_color(tauri::webview::Color(23, 29, 47, 255));
     }
@@ -2216,6 +2319,24 @@ impl SessionManager {
     is_cold_start: bool,
   ) -> Result<ManagerSnapshot, String> {
     let parsed_uuid = Uuid::parse_str(&account.uuid).map_err(|e| format!("非法 UUID: {e}"))?;
+    let proxy_url = match crate::network::parse_account_proxy(account.proxy_url.as_deref().unwrap_or("")) {
+      Ok(proxy_url) => proxy_url,
+      Err(error) => {
+        let mut locked = self.inner.lock().await;
+        locked.active_slot = None;
+        self.active_view_id.store(0, Ordering::SeqCst);
+        locked.notice = Some(format!("该账号的代理设置无效，已阻止打开：{error}"));
+        return Ok(Self::snapshot_from_locked(&locked));
+      }
+    };
+    #[cfg(not(windows))]
+    if proxy_url.is_some() {
+      let mut locked = self.inner.lock().await;
+      locked.active_slot = None;
+      self.active_view_id.store(0, Ordering::SeqCst);
+      locked.notice = Some("该账号已绑定代理，但每账号独立代理目前仅支持 Windows 桌面版，已阻止打开".to_string());
+      return Ok(Self::snapshot_from_locked(&locked));
+    }
     let profile_dir = app_data_dir.join("profiles").join(&account.uuid);
 
     #[cfg(windows)]
@@ -2277,6 +2398,7 @@ impl SessionManager {
       key.clone(),
       parsed_uuid,
       &profile_dir,
+      proxy_url.clone(),
       &webview_label,
       view_instance_id,
       allow_blank,
@@ -2572,6 +2694,11 @@ impl SessionManager {
     };
 
     let parsed_uuid = Uuid::parse_str(&account.uuid).map_err(|e| format!("非法 UUID: {e}"))?;
+    let proxy_url = crate::network::parse_account_proxy(account.proxy_url.as_deref().unwrap_or(""))?;
+    #[cfg(not(windows))]
+    if proxy_url.is_some() {
+      return Err("每账号独立代理目前仅支持 Windows 桌面版".to_string());
+    }
     let profile_dir = app_data_dir.join("profiles").join(&account.uuid);
 
     #[cfg(windows)]
@@ -2584,7 +2711,16 @@ impl SessionManager {
 
     {
       let mut locked = self.inner.lock().await;
-      if locked.warm_pool.contains_key(&key) || locked.warm_pool.len() >= MAX_WARM_DESKTOP_VIEWS {
+      let latest_proxy = locked
+        .store
+        .accounts
+        .iter()
+        .find(|stored| stored.provider_id == key.provider_id && stored.uuid == key.uuid)
+        .and_then(|stored| stored.proxy_url.as_deref());
+      if latest_proxy != account.proxy_url.as_deref()
+        || locked.warm_pool.contains_key(&key)
+        || locked.warm_pool.len() >= MAX_WARM_DESKTOP_VIEWS
+      {
         return Ok(());
       }
       locked.warm_pool.insert(
@@ -2609,6 +2745,7 @@ impl SessionManager {
       key.clone(),
       parsed_uuid,
       &profile_dir,
+      proxy_url,
       &webview_label,
       view_instance_id,
       allow_blank,
@@ -2768,6 +2905,20 @@ impl SessionManager {
     view_instance_id: u64,
     is_cold_start: bool,
   ) -> Result<ManagerSnapshot, String> {
+    if account
+      .proxy_url
+      .as_deref()
+      .map(str::trim)
+      .is_some_and(|proxy| !proxy.is_empty())
+    {
+      let mut locked = self.inner.lock().await;
+      locked.active_slot = None;
+      locked.notice = Some(
+        "该账号已绑定代理，但 Android 尚不支持 per-account proxy，已阻止打开".to_string(),
+      );
+      return Ok(Self::snapshot_from_locked(&locked));
+    }
+
     let caps = match crate::platform::android::check_capabilities(app).await {
       Ok(c) => c,
       Err(err) => {
