@@ -3403,6 +3403,8 @@ impl SessionManager {
     tauri::async_runtime::spawn(async move {
       let mut tick_count: u32 = 0;
       let mut consecutive_logged_out: u8 = 0;
+      #[cfg(windows)]
+      let mut consecutive_proxy_failures: u8 = 0;
       loop {
         let delay_ms = if tick_count < 6 { 950 } else { 6500 };
         tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
@@ -3437,6 +3439,85 @@ impl SessionManager {
           }
           break;
         };
+
+        #[cfg(windows)]
+        {
+          let proxy_raw = {
+            let locked = mgr.inner.lock().await;
+            locked
+              .store
+              .accounts
+              .iter()
+              .find(|account| {
+                account.provider_id == key.provider_id && account.uuid == key.uuid
+              })
+              .and_then(|account| account.proxy_url.clone())
+          };
+
+          if let Some(raw_proxy) = proxy_raw.as_deref() {
+            let route_result = match crate::network::parse_account_proxy(raw_proxy) {
+              Ok(Some(proxy_url)) => {
+                let target_url = get_provider(key.provider_id).info.entry_url.parse::<Url>();
+                match target_url {
+                  Ok(target_url) => crate::network::check_proxy_route(proxy_url, target_url).await,
+                  Err(error) => Err(format!("服务入口地址错误: {error}")),
+                }
+              }
+              Ok(None) => Err("账号代理配置为空，请重新保存代理设置".to_string()),
+              Err(error) => Err(error),
+            };
+
+            if route_result.is_ok() {
+              consecutive_proxy_failures = 0;
+            } else {
+              consecutive_proxy_failures = consecutive_proxy_failures.saturating_add(1);
+              if consecutive_proxy_failures >= 2 {
+                let error = route_result
+                  .err()
+                  .unwrap_or_else(|| "代理连通性检查失败".to_string());
+                let snap_opt = {
+                  let mut locked = mgr.inner.lock().await;
+                  let same_view = locked
+                    .warm_pool
+                    .get(&key)
+                    .map(|entry| entry.view_instance_id == view_instance_id)
+                    .unwrap_or(false);
+                  if !same_view {
+                    None
+                  } else {
+                    if let Some(entry) = locked.warm_pool.remove(&key) {
+                      Self::close_warm_entry(&app, entry);
+                    }
+                    let is_foreground = locked
+                      .active_slot
+                      .as_ref()
+                      .map(|slot| {
+                        slot.account_key == key && slot.view_instance_id == view_instance_id
+                      })
+                      .unwrap_or(false);
+                    if is_foreground {
+                      locked.active_slot = None;
+                      mgr.active_view_id.store(0, Ordering::SeqCst);
+                      locked.notice = Some(format!(
+                        "代理连接中断，已关闭该账号视图并阻止继续操作：{error}"
+                      ));
+                      Self::apply_desktop_layout_locked(&app, &locked);
+                      Some(Self::snapshot_from_locked(&locked))
+                    } else {
+                      None
+                    }
+                  }
+                };
+                if let Some(snap) = snap_opt {
+                  mgr.emit_snapshot(&app, &snap);
+                }
+                break;
+              }
+            }
+          } else {
+            consecutive_proxy_failures = 0;
+          }
+        }
 
         if let Some(p_label) = popup_label {
           if let Some(p_wv) = app.get_webview(&p_label) {
