@@ -1,4 +1,5 @@
 use crate::providers::ProviderId;
+use crate::proxy_pool::ProxyPoolBinding;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -72,13 +73,25 @@ pub struct AccountRecord {
   pub proxy_required: bool,
   #[serde(default, alias = "pending_activation")]
   pub pending_activation: bool,
+  #[serde(default, alias = "proxy_pool_binding")]
+  pub proxy_pool_binding: Option<ProxyPoolBinding>,
 }
 
 impl AccountRecord {
+  pub fn same_proxy_configuration(&self, other: &Self) -> bool {
+    self.proxy_url == other.proxy_url
+      && self.proxy_required == other.proxy_required
+      && self.pending_activation == other.pending_activation
+      && self.proxy_pool_binding == other.proxy_pool_binding
+  }
+
   pub fn validated_proxy(&self) -> Result<Option<url::Url>, String> {
     let proxy = crate::network::parse_account_proxy(self.proxy_url.as_deref().unwrap_or(""))?;
     if self.proxy_required && proxy.is_none() {
       return Err("该账号必须先配置代理，已阻止打开".to_string());
+    }
+    if let Some(binding) = &self.proxy_pool_binding {
+      crate::proxy_pool::validate_binding(self.proxy_url.as_deref().unwrap_or(""), binding)?;
     }
     Ok(proxy)
   }
@@ -161,6 +174,7 @@ mod tests {
       proxy_url: proxy_url.map(str::to_string),
       proxy_required: false,
       pending_activation: false,
+      proxy_pool_binding: None,
     }
   }
 
@@ -280,6 +294,66 @@ mod tests {
         .is_err());
       }
     }
+  }
+
+  #[test]
+  fn pool_binding_survives_camel_and_snake_migration_and_roundtrip() {
+    let binding = json!({
+      "sourcePath": "C:\\synthetic\\sidecar.yaml",
+      "entryId": "socks5:7900",
+      "fingerprint": "synthetic-node-fingerprint",
+      "label": "Synthetic A"
+    });
+    for field in ["proxyPoolBinding", "proxy_pool_binding"] {
+      let mut entry = serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
+      entry.as_object_mut().unwrap().remove("proxyPoolBinding");
+      entry[field] = binding.clone();
+      let (store, _) = migrate_from_value(json!({"version": 2, "accounts": [entry]})).unwrap();
+      let saved = serde_json::to_value(&store).unwrap();
+      assert_eq!(saved["accounts"][0]["proxyPoolBinding"], binding);
+      let deserialized: AccountsStoreFile = serde_json::from_value(saved.clone()).unwrap();
+      let (reloaded, _) = migrate_from_value(saved).unwrap();
+      assert_eq!(deserialized.accounts[0].proxy_pool_binding, store.accounts[0].proxy_pool_binding);
+      assert_eq!(reloaded.accounts[0].proxy_pool_binding, store.accounts[0].proxy_pool_binding);
+    }
+  }
+
+  #[test]
+  fn malformed_pool_binding_is_not_silently_detached() {
+    for field in ["proxyPoolBinding", "proxy_pool_binding"] {
+      for invalid in [json!(false), json!("binding"), json!({}), json!({"entryId": "socks5:7900"})] {
+        let mut entry = serde_json::to_value(account(TEST_UUID, Some("socks5://127.0.0.1:7900"))).unwrap();
+        entry.as_object_mut().unwrap().remove("proxyPoolBinding");
+        entry[field] = invalid;
+        assert!(migrate_from_value(json!({"version": 2, "accounts": [entry]})).is_err());
+      }
+    }
+    for value in [None, Some(serde_json::Value::Null)] {
+      let mut entry = serde_json::to_value(account(TEST_UUID, None)).unwrap();
+      entry.as_object_mut().unwrap().remove("proxyPoolBinding");
+      if let Some(value) = value {
+        entry["proxyPoolBinding"] = value;
+      }
+      let (store, _) = migrate_from_value(json!({"version": 2, "accounts": [entry]})).unwrap();
+      assert!(store.accounts[0].proxy_pool_binding.is_none());
+    }
+  }
+
+  #[test]
+  fn same_port_with_changed_pool_fingerprint_is_a_new_configuration() {
+    let mut original = account(TEST_UUID, Some("socks5://127.0.0.1:7900/"));
+    original.proxy_pool_binding = Some(crate::proxy_pool::ProxyPoolBinding {
+      source_path: "C:\\synthetic\\sidecar.yaml".to_string(),
+      entry_id: "socks5:7900".to_string(),
+      fingerprint: "old-node".to_string(),
+      label: "Synthetic A".to_string(),
+    });
+    let mut changed = original.clone();
+    assert!(original.same_proxy_configuration(&changed));
+    changed.proxy_pool_binding.as_mut().unwrap().fingerprint = "new-node".to_string();
+    assert!(!original.same_proxy_configuration(&changed));
+    changed.proxy_pool_binding = None;
+    assert!(!original.same_proxy_configuration(&changed));
   }
 
   #[test]
@@ -484,6 +558,16 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
           .ok_or_else(|| "pendingActivation 必须是布尔值".to_string())?,
         None => false,
       };
+      let proxy_pool_binding = match item_obj
+        .get("proxyPoolBinding")
+        .or_else(|| item_obj.get("proxy_pool_binding"))
+      {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(
+          serde_json::from_value::<ProxyPoolBinding>(value.clone())
+            .map_err(|_| "proxyPoolBinding 格式无效，拒绝丢失代理池绑定".to_string())?,
+        ),
+      };
 
       accounts.push(AccountRecord {
         provider_id,
@@ -505,6 +589,7 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
           .map(str::to_string),
         proxy_required,
         pending_activation,
+        proxy_pool_binding,
       });
     }
   }

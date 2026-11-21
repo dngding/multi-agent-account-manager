@@ -8,6 +8,8 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "allow-get-manager-state",
+    "allow-get-proxy-pool",
+    "allow-set-proxy-pool-source",
     "allow-select-provider",
     "allow-add-account",
     "allow-rename-account",

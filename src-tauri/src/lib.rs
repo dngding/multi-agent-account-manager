@@ -3,10 +3,12 @@ mod app_paths;
 mod network;
 mod platform;
 mod providers;
+mod proxy_pool;
 mod session_manager;
 mod storage;
 mod updater;
 
+use proxy_pool::{ProxyPool, ProxyPoolBinding, ProxyPoolSnapshot};
 use session_manager::{ManagerSnapshot, SessionManager, APP_TITLE};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -15,6 +17,25 @@ use updater::{InstallUpdateOutcome, InstallUpdateRequest, UpdateCheckResult};
 #[tauri::command]
 async fn get_manager_state(mgr: State<'_, Arc<SessionManager>>) -> Result<ManagerSnapshot, String> {
   Ok(mgr.get_snapshot().await)
+}
+
+#[tauri::command]
+async fn get_proxy_pool(pool: State<'_, ProxyPool>) -> Result<ProxyPoolSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("本地代理池目前仅支持 Windows 桌面版".to_string());
+  }
+  Ok(pool.snapshot())
+}
+
+#[tauri::command]
+async fn set_proxy_pool_source(
+  pool: State<'_, ProxyPool>,
+  source_path: String,
+) -> Result<ProxyPoolSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("本地代理池目前仅支持 Windows 桌面版".to_string());
+  }
+  pool.set_source(&source_path)
 }
 
 #[tauri::command]
@@ -34,6 +55,7 @@ async fn add_account(
   alias: String,
   proxy_url: Option<String>,
   open_after_save: Option<bool>,
+  proxy_pool_binding: Option<ProxyPoolBinding>,
 ) -> Result<ManagerSnapshot, String> {
   mgr
     .add_account(
@@ -42,6 +64,7 @@ async fn add_account(
       &alias,
       proxy_url.as_deref().unwrap_or(""),
       open_after_save.unwrap_or(true),
+      proxy_pool_binding,
     )
     .await
 }
@@ -64,9 +87,10 @@ async fn set_account_proxy(
   provider_id: String,
   uuid: String,
   proxy_url: String,
+  proxy_pool_binding: Option<ProxyPoolBinding>,
 ) -> Result<ManagerSnapshot, String> {
   mgr
-    .set_account_proxy(&app, &provider_id, &uuid, &proxy_url)
+    .set_account_proxy(&app, &provider_id, &uuid, &proxy_url, proxy_pool_binding)
     .await
 }
 
@@ -164,6 +188,7 @@ pub fn run() {
         app_paths::resolve_data_dir(app_data_dir, std::env::var_os("DIEHAO_DATA_DIR"))?;
       #[cfg(windows)]
       std::fs::create_dir_all(&app_data_dir)?;
+      app.manage(ProxyPool::new(app_data_dir.clone()));
       let session_mgr = Arc::new(SessionManager::new(app_data_dir.clone()));
       app.manage(Arc::clone(&session_mgr));
 
@@ -237,6 +262,8 @@ pub fn run() {
     })
     .invoke_handler(tauri::generate_handler![
       get_manager_state,
+      get_proxy_pool,
+      set_proxy_pool_source,
       select_provider,
       add_account,
       rename_account,

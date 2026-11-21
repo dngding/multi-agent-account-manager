@@ -1,5 +1,7 @@
 const APP_COMMANDS: &[&str] = &[
   "get_manager_state",
+  "get_proxy_pool",
+  "set_proxy_pool_source",
   "select_provider",
   "add_account",
   "rename_account",

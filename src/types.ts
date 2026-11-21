@@ -43,6 +43,31 @@ export interface AccountRecord {
   proxyUrl: string | null;
   proxyRequired: boolean;
   pendingActivation: boolean;
+  proxyPoolBinding: ProxyPoolBinding | null;
+}
+
+export interface ProxyPoolBinding {
+  sourcePath: string;
+  entryId: string;
+  fingerprint: string;
+  label: string;
+}
+
+export interface ProxyPoolEntry {
+  id: string;
+  label: string;
+  proxyUrl: string;
+  fingerprint: string;
+  duplicateCount: number;
+}
+
+export interface ProxyPoolSnapshot {
+  sourcePath: string | null;
+  discoveredSources: string[];
+  entries: ProxyPoolEntry[];
+  revision: string;
+  checkedAtMs: number;
+  error: string | null;
 }
 
 export interface AccountNetworkState extends AccountKey {

@@ -8,6 +8,9 @@ import type {
   ManagerSnapshot,
   ProviderId,
   ProviderInfo,
+  ProxyPoolBinding,
+  ProxyPoolEntry,
+  ProxyPoolSnapshot,
   QuotaDetail,
   UpdateCheckResult,
   UpdateProgressEvent,
@@ -40,6 +43,236 @@ let optimisticSwitching: AccountKey | null = null;
 let busy = false;
 let modalSubmitting = false;
 let lastRenderedUpdateStage: string | null = null;
+
+interface ProxyPickerState {
+  mode: "pool" | "manual";
+  pool: ProxyPoolSnapshot | null;
+  selected: ProxyPoolBinding | null;
+  loading: boolean;
+  search: string;
+  sourceDraft: string;
+  sourceTouched: boolean;
+  sourceSettingsOpen: boolean;
+  selectionWarning: string | null;
+  requestSeq: number;
+}
+
+let proxyPicker: ProxyPickerState | null = null;
+
+function hasProxyPicker(): boolean {
+  return snapshot?.platform === "windows" && (modal.kind === "add" || modal.kind === "proxy");
+}
+
+function proxyEntryUsers(entry: ProxyPoolEntry): AccountRecord[] {
+  const endpoint = normalizedProxyEndpoint(entry.proxyUrl);
+  return (snapshot?.accounts ?? []).filter((account) => {
+    if (modal.kind === "proxy" && isSameKey(modal.account, account)) return false;
+    return Boolean(
+      (account.proxyUrl && normalizedProxyEndpoint(account.proxyUrl) === endpoint) ||
+      account.proxyPoolBinding?.fingerprint === entry.fingerprint
+    );
+  });
+}
+
+function normalizedProxyEndpoint(value: string): string {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    const normalizedHost = host === "localhost" || host === "[::1]" ? "127.0.0.1" : host;
+    return `${normalizedHost}:${url.port}`;
+  } catch {
+    return value;
+  }
+}
+
+function proxyPoolOptions(picker: ProxyPickerState): string {
+  const query = picker.search.trim().toLocaleLowerCase();
+  const entries = picker.pool?.error ? [] : picker.pool?.entries ?? [];
+  const options = entries.filter((entry) =>
+    entry.id === picker.selected?.entryId || `${entry.label} ${entry.proxyUrl}`.toLocaleLowerCase().includes(query)
+  );
+  return `<option value="">请选择一个代理，不会自动分配</option>${options.map((entry) => {
+    const users = proxyEntryUsers(entry);
+    const usage = users.length ? ` · 本应用 ${users.length} 号已用` : "";
+    const duplicate = entry.duplicateCount > 1 ? ` · 同目标 ${entry.duplicateCount} 入口` : "";
+    return `<option value="${escapeHtml(entry.id)}"${entry.id === picker.selected?.entryId ? " selected" : ""}>${escapeHtml(`${entry.label} · ${entry.proxyUrl}${usage}${duplicate}`)}</option>`;
+  }).join("")}`;
+}
+
+function proxyPoolStatus(picker: ProxyPickerState): string {
+  if (picker.loading) return "正在读取最新代理池…";
+  if (picker.pool?.error) return picker.pool.error;
+  if (!picker.pool?.sourcePath) return "未找到代理池，请在“代理池来源”中选择或填写现有本地 YAML 文件。";
+  if (!picker.pool.entries.length) return "此来源没有可选的固定代理入口。可更换来源或使用手动地址。";
+  const checked = new Date(picker.pool.checkedAtMs).toLocaleTimeString("zh-CN", { hour12: false });
+  return `${picker.pool.entries.length} 个入口 · ${checked} 已同步；打开期间每 10 秒检查更新`;
+}
+
+function proxyPoolSelectedDetail(picker: ProxyPickerState): string {
+  if (picker.selectionWarning) return picker.selectionWarning;
+  const entry = picker.pool?.entries.find((item) => item.id === picker.selected?.entryId);
+  if (!entry) return "选择后固定绑定此入口；代理池更新不会自动改选其他入口。";
+  const users = proxyEntryUsers(entry);
+  const parts = [users.length ? `本应用已用：${users.map((account) => account.alias).join("、")}` : "本应用暂无其他账号使用此端口或目标"];
+  if (entry.duplicateCount > 1) parts.push(`同一目标共有 ${entry.duplicateCount} 个入口`);
+  return parts.join("；");
+}
+
+function renderProxyPicker(manualId: string, manualDraft: string): string {
+  const picker = proxyPicker;
+  if (!picker) return "";
+  const poolMode = picker.mode === "pool";
+  return `
+    <div class="proxy-mode-switch" role="group" aria-label="代理配置方式">
+      <button type="button" class="btn ${poolMode ? "selected" : ""}" data-proxy-mode="pool" aria-pressed="${poolMode}">从现有代理池选择</button>
+      <button type="button" class="btn ${!poolMode ? "selected" : ""}" data-proxy-mode="manual" aria-pressed="${!poolMode}">手动地址</button>
+    </div>
+    ${poolMode ? `
+      <div class="proxy-pool-picker">
+        <label class="modal-field-label" for="proxy-pool-search">搜索代理</label>
+        <div class="proxy-pool-toolbar">
+          <input id="proxy-pool-search" class="modal-input" placeholder="名称或端口" value="${escapeHtml(picker.search)}" />
+          <button id="proxy-pool-refresh" class="btn" type="button"${picker.loading ? " disabled" : ""}>刷新</button>
+        </div>
+        <label class="modal-field-label" for="proxy-pool-select">选择固定入口</label>
+        <select id="proxy-pool-select" class="modal-input proxy-pool-select"${(!picker.pool && picker.loading) || picker.pool?.error ? " disabled" : ""}>${proxyPoolOptions(picker)}</select>
+        <div id="proxy-pool-status" class="modal-desc${picker.pool?.error ? " proxy-pool-warning" : ""}" role="status">${escapeHtml(proxyPoolStatus(picker))}</div>
+        <div id="proxy-pool-selection-detail" class="modal-desc${picker.selectionWarning ? " proxy-pool-warning" : ""}">${escapeHtml(proxyPoolSelectedDetail(picker))}</div>
+        <details id="proxy-pool-source-settings" class="proxy-pool-source"${picker.sourceSettingsOpen ? " open" : ""}>
+          <summary>代理池来源</summary>
+          <div id="proxy-pool-current-source" class="modal-desc proxy-pool-path">${escapeHtml(picker.pool?.sourcePath ?? "自动查找现有代理池")}</div>
+          <label class="modal-field-label" for="proxy-pool-discovered-source">已发现的本地文件</label>
+          <select id="proxy-pool-discovered-source" class="modal-input">
+            <option value="">选择候选文件后点击应用</option>
+            ${(picker.pool?.discoveredSources ?? []).map((path) => `<option value="${escapeHtml(path)}"${path === picker.sourceDraft ? " selected" : ""}>${escapeHtml(path)}</option>`).join("")}
+          </select>
+          <label class="modal-field-label" for="proxy-pool-source-path">或填写绝对 YAML 路径</label>
+          <input id="proxy-pool-source-path" class="modal-input" spellcheck="false" placeholder="C:/path/to/sidecar.yaml" value="${escapeHtml(picker.sourceDraft)}" />
+          <div class="proxy-pool-source-actions">
+            <button id="proxy-pool-source-apply" class="btn" type="button"${picker.loading ? " disabled" : ""}>应用来源</button>
+            <button id="proxy-pool-source-auto" class="btn" type="button"${picker.loading ? " disabled" : ""}>自动发现</button>
+          </div>
+        </details>
+        <div class="modal-desc">只读取现有池，不修改或重启代理服务。标记仅统计本应用，Telegram 占用未知；同目标标识不代表公网 IP。</div>
+      </div>
+    ` : `
+      <label class="modal-field-label" for="${manualId}">HTTP / SOCKS5 地址</label>
+      <input id="${manualId}" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:18081" value="${escapeHtml(manualDraft)}" />
+      <div class="modal-desc">手动保存会脱离代理池跟踪。机场订阅先由代理客户端解析，再填写本机固定端口；这里不接收订阅链接或密码。</div>
+    `}
+  `;
+}
+
+function refreshProxyPickerDom(): void {
+  const picker = proxyPicker;
+  if (!picker || !hasProxyPicker() || picker.mode !== "pool") return;
+  const select = document.querySelector<HTMLSelectElement>("#proxy-pool-select");
+  if (select) {
+    const options = proxyPoolOptions(picker);
+    if (select.dataset.optionsHtml !== options) {
+      select.innerHTML = options;
+      select.dataset.optionsHtml = options;
+    }
+    select.value = picker.selected?.entryId ?? "";
+    select.disabled = (!picker.pool && picker.loading) || Boolean(picker.pool?.error);
+  }
+  const status = document.querySelector<HTMLElement>("#proxy-pool-status");
+  if (status) {
+    status.textContent = proxyPoolStatus(picker);
+    status.classList.toggle("proxy-pool-warning", Boolean(picker.pool?.error));
+  }
+  const detail = document.querySelector<HTMLElement>("#proxy-pool-selection-detail");
+  if (detail) {
+    detail.textContent = proxyPoolSelectedDetail(picker);
+    detail.classList.toggle("proxy-pool-warning", Boolean(picker.selectionWarning));
+  }
+  const current = document.querySelector<HTMLElement>("#proxy-pool-current-source");
+  if (current) current.textContent = picker.pool?.sourcePath ?? "自动查找现有代理池";
+  const sourceInput = document.querySelector<HTMLInputElement>("#proxy-pool-source-path");
+  if (sourceInput && !picker.sourceTouched && document.activeElement !== sourceInput) sourceInput.value = picker.sourceDraft;
+  const discovered = document.querySelector<HTMLSelectElement>("#proxy-pool-discovered-source");
+  if (discovered) {
+    const oldValue = discovered.value;
+    const options = `<option value="">选择候选文件后点击应用</option>${(picker.pool?.discoveredSources ?? []).map((path) => `<option value="${escapeHtml(path)}">${escapeHtml(path)}</option>`).join("")}`;
+    if (discovered.dataset.optionsHtml !== options) {
+      discovered.innerHTML = options;
+      discovered.dataset.optionsHtml = options;
+      discovered.value = oldValue || picker.sourceDraft;
+    }
+  }
+  for (const id of ["proxy-pool-refresh", "proxy-pool-source-apply", "proxy-pool-source-auto"]) {
+    const button = document.querySelector<HTMLButtonElement>(`#${id}`);
+    if (button) button.disabled = picker.loading;
+  }
+  const primary = document.querySelector<HTMLButtonElement>("#modal-confirm-btn");
+  const saveOnly = document.querySelector<HTMLButtonElement>("#modal-save-only-btn");
+  if (primary) primary.disabled = picker.loading || Boolean(picker.pool?.error) || !picker.selected || Boolean(picker.selectionWarning);
+  if (saveOnly) saveOnly.disabled = picker.loading || Boolean(picker.selectionWarning);
+}
+
+async function refreshProxyPool(sourcePath?: string): Promise<void> {
+  const picker = proxyPicker;
+  if (!picker || !hasProxyPicker()) return;
+  const requestSeq = ++picker.requestSeq;
+  const submittedSourceDraft = picker.sourceDraft;
+  picker.loading = true;
+  refreshProxyPickerDom();
+  try {
+    const result = sourcePath === undefined
+      ? await invoke<ProxyPoolSnapshot>("get_proxy_pool")
+      : await invoke<ProxyPoolSnapshot>("set_proxy_pool_source", { sourcePath });
+    if (proxyPicker !== picker || requestSeq !== picker.requestSeq || !hasProxyPicker()) return;
+    picker.pool = { ...result, entries: result.error ? [] : result.entries };
+    if (!picker.sourceTouched || (sourcePath !== undefined && picker.sourceDraft === submittedSourceDraft)) {
+      picker.sourceDraft = result.sourcePath ?? "";
+      picker.sourceTouched = false;
+    }
+    if (picker.selected) {
+      const entry = picker.pool.entries.find((item) => item.id === picker.selected!.entryId);
+      if (result.error || result.sourcePath !== picker.selected.sourcePath || !entry || entry.fingerprint !== picker.selected.fingerprint) {
+        picker.selected = null;
+        picker.selectionWarning = "原选择已失效或目标已变化，请从最新列表重新选择确认。";
+      } else {
+        picker.selected = { ...picker.selected, label: entry.label };
+      }
+    }
+  } catch (error) {
+    if (proxyPicker !== picker || requestSeq !== picker.requestSeq) return;
+    if (picker.selected) picker.selectionWarning = "读取失败，原选择已失效；请刷新成功后重新选择。";
+    picker.selected = null;
+    picker.pool = {
+      sourcePath: picker.pool?.sourcePath ?? null,
+      discoveredSources: picker.pool?.discoveredSources ?? [],
+      entries: [], revision: "", checkedAtMs: Date.now(), error: String(error),
+    };
+  } finally {
+    if (proxyPicker === picker && requestSeq === picker.requestSeq) {
+      picker.loading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+function proxySubmission(manualDraft: string, allowEmpty: boolean): {
+  proxyUrl: string;
+  proxyPoolBinding: ProxyPoolBinding | null;
+  error: string | null;
+} {
+  if (proxyPicker?.mode !== "pool") {
+    const proxyUrl = manualDraft.trim();
+    return { proxyUrl, proxyPoolBinding: null, error: !allowEmpty && !proxyUrl ? "请先填写独立代理，或仅保存为待配置账号。" : validateProxyDraft(proxyUrl) };
+  }
+  const picker = proxyPicker;
+  if (picker.loading) return { proxyUrl: "", proxyPoolBinding: null, error: "正在同步代理池，请稍后重试。" };
+  if (picker.selectionWarning) return { proxyUrl: "", proxyPoolBinding: null, error: picker.selectionWarning };
+  const selected = picker.selected;
+  if (!selected && allowEmpty) return { proxyUrl: "", proxyPoolBinding: null, error: null };
+  const entry = picker.pool?.entries.find((item) => item.id === selected?.entryId);
+  if (!selected || !entry || picker.pool?.error || selected.sourcePath !== picker.pool?.sourcePath || selected.fingerprint !== entry.fingerprint) {
+    return { proxyUrl: "", proxyPoolBinding: null, error: "请从最新代理池选择一个入口；也可切到手动地址。" };
+  }
+  return { proxyUrl: entry.proxyUrl, proxyPoolBinding: { ...selected, label: entry.label }, error: null };
+}
 
 const updateState: {
   checking: boolean;
@@ -454,6 +687,17 @@ async function setModal(next: ModalMode): Promise<void> {
   const wasActive = modal.kind !== "none";
   const isActive = next.kind !== "none";
   modal = next;
+  if (snapshot?.platform === "windows" && (next.kind === "add" || next.kind === "proxy")) {
+    const binding = next.kind === "proxy" ? next.account.proxyPoolBinding ?? null : null;
+    proxyPicker = {
+      mode: next.kind === "add" || binding ? "pool" : "manual",
+      pool: null, selected: binding ? { ...binding } : null, loading: true,
+      search: "", sourceDraft: binding?.sourcePath ?? "", sourceTouched: false,
+      sourceSettingsOpen: false, selectionWarning: null, requestSeq: 0,
+    };
+  } else {
+    proxyPicker = null;
+  }
   if (wasActive !== isActive) {
     try {
       snapshot = await invoke<ManagerSnapshot>("set_modal_active", {
@@ -475,10 +719,11 @@ async function setModal(next: ModalMode): Promise<void> {
   } else if (next.kind === "remove") {
     document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.focus();
   } else if (next.kind === "proxy") {
-    const input = document.querySelector<HTMLInputElement>("#modal-proxy-input");
+    const input = document.querySelector<HTMLInputElement>(proxyPicker?.mode === "pool" ? "#proxy-pool-search" : "#modal-proxy-input");
     input?.focus();
     input?.select();
   }
+  if (hasProxyPicker()) void refreshProxyPool();
 }
 
 async function callCommand(
@@ -640,10 +885,8 @@ function renderModal(provider: ProviderInfo): string {
           <label class="modal-field-label" for="modal-alias-input">账号备注</label>
           <input id="modal-alias-input" class="modal-input" maxlength="60" placeholder="备注名称（留空则自动获取登录邮箱）" value="${escapeHtml(modal.draft)}" />
           ${supportsAccountProxy ? `
-            <label class="modal-field-label" for="modal-add-proxy-input">独立代理</label>
-            <input id="modal-add-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:18081" value="${escapeHtml(modal.proxyDraft)}" />
-            <div class="modal-desc">机场订阅先导入 Mihomo 等客户端，再填写固定到指定节点的本机 HTTP / SOCKS5 端口。这里不接收订阅链接或代理密码。</div>
-            <div class="modal-desc">新账号必须使用代理。可留空“仅保存”为待配置账号；配置并检查通过后才会打开网页。</div>
+            ${renderProxyPicker("modal-add-proxy-input", modal.proxyDraft)}
+            <div class="modal-desc">新账号必须使用代理。可不选入口“仅保存”为待配置账号；配置并检查通过后才会打开网页。</div>
           ` : ""}
           ${modal.error ? `<div class="modal-error" role="alert">${escapeHtml(modal.error)}</div>` : ""}
           <div class="modal-footer">
@@ -675,8 +918,7 @@ function renderModal(provider: ProviderInfo): string {
       <div class="inline-modal" role="dialog" aria-modal="true">
         <div class="modal-card">
           <div class="modal-title">配置「${escapeHtml(modal.account.alias)}」的独立代理</div>
-          <div class="modal-desc">Windows 桌面版支持 HTTP / SOCKS5 代理。机场订阅先导入 Mihomo 等客户端，再填写该账号固定使用的本机端口；这里不接收订阅链接或代理密码。</div>
-          <input id="modal-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:18081 或 socks5://127.0.0.1:18081" value="${escapeHtml(modal.draft)}" />
+          ${renderProxyPicker("modal-proxy-input", modal.draft)}
           <div class="modal-desc">${modal.account.proxyRequired || modal.account.proxyUrl ? "此账号必须使用代理。清空后会关闭其会话并阻止打开，直到重新配置代理。" : "旧账号当前使用系统默认网络。保存独立代理后将要求使用代理，之后清空会阻止打开。"}</div>
           <div class="modal-desc">保存后会重建该账号会话并检查连通性。当前未验证出口 IP、DNS / WebRTC 或系统级拒绝直连；配置代理不等于已验证全面网络隔离。</div>
           ${modal.error ? `<div class="modal-error" role="alert">${escapeHtml(modal.error)}</div>` : ""}
@@ -878,6 +1120,7 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                   ${shortcutHint}
                   ${alertBadgeHtml}
                   ${sharedProxyBadge}
+                  ${acc.proxyPoolBinding ? `<span class="proxy-status pool" title="${escapeHtml(acc.proxyPoolBinding.label)}">池 · ${escapeHtml(acc.proxyPoolBinding.label)}</span>` : ""}
                   ${networkPresentation ? `<span class="proxy-status ${networkPresentation.className}"${networkPresentation.message ? ` title="${escapeHtml(networkPresentation.message)}"` : ""}>${networkPresentation.label}</span>` : ""}
                 </div>
                 ${compactSubHtml}
@@ -971,6 +1214,12 @@ function render(): void {
   const root = document.querySelector<HTMLElement>("#app");
   if (!root || !snapshot) return;
 
+  const focused = document.activeElement;
+  const preserveFocus = focused instanceof HTMLElement && focused.id && focused.closest(".inline-modal")
+    ? { id: focused.id, start: focused instanceof HTMLInputElement ? focused.selectionStart : null, end: focused instanceof HTMLInputElement ? focused.selectionEnd : null }
+    : null;
+  const modalScroll = document.querySelector<HTMLElement>(".inline-modal")?.scrollTop ?? 0;
+
   const provider = currentProvider(snapshot);
   const isAndroid = snapshot.platform === "android";
 
@@ -1035,9 +1284,69 @@ function render(): void {
   }
 
   bindEvents(snapshot, provider);
+  refreshProxyPickerDom();
+  const modalElement = document.querySelector<HTMLElement>(".inline-modal");
+  if (modalElement) modalElement.scrollTop = modalScroll;
+  if (preserveFocus) {
+    const replacement = document.getElementById(preserveFocus.id);
+    replacement?.focus({ preventScroll: true });
+    if (replacement instanceof HTMLInputElement && preserveFocus.start !== null && preserveFocus.end !== null) {
+      replacement.setSelectionRange(preserveFocus.start, preserveFocus.end);
+    }
+  }
 }
 
 function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
+  document.querySelectorAll<HTMLButtonElement>("[data-proxy-mode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!proxyPicker || modalSubmitting || busy) return;
+      proxyPicker.mode = button.dataset.proxyMode === "manual" ? "manual" : "pool";
+      if (modal.kind === "add" || modal.kind === "proxy") modal.error = null;
+      render();
+      const id = proxyPicker.mode === "pool" ? "proxy-pool-search" : modal.kind === "add" ? "modal-add-proxy-input" : "modal-proxy-input";
+      document.getElementById(id)?.focus();
+      if (proxyPicker.mode === "pool") void refreshProxyPool();
+    });
+  });
+  document.querySelector<HTMLInputElement>("#proxy-pool-search")?.addEventListener("input", (event) => {
+    if (!proxyPicker) return;
+    proxyPicker.search = (event.currentTarget as HTMLInputElement).value;
+    refreshProxyPickerDom();
+  });
+  document.querySelector<HTMLSelectElement>("#proxy-pool-select")?.addEventListener("change", (event) => {
+    const picker = proxyPicker;
+    if (!picker || picker.pool?.error) return;
+    const entry = picker.pool?.entries.find((item) => item.id === (event.currentTarget as HTMLSelectElement).value);
+    picker.selected = entry && picker.pool?.sourcePath ? {
+      sourcePath: picker.pool.sourcePath, entryId: entry.id, fingerprint: entry.fingerprint, label: entry.label,
+    } : null;
+    picker.selectionWarning = null;
+    if (modal.kind === "add" || modal.kind === "proxy") modal.error = null;
+    document.querySelector(".modal-error")?.remove();
+    refreshProxyPickerDom();
+  });
+  document.querySelector("#proxy-pool-refresh")?.addEventListener("click", () => void refreshProxyPool());
+  document.querySelector<HTMLDetailsElement>("#proxy-pool-source-settings")?.addEventListener("toggle", (event) => {
+    if (proxyPicker) proxyPicker.sourceSettingsOpen = (event.currentTarget as HTMLDetailsElement).open;
+  });
+  document.querySelector<HTMLInputElement>("#proxy-pool-source-path")?.addEventListener("input", (event) => {
+    if (!proxyPicker) return;
+    proxyPicker.sourceDraft = (event.currentTarget as HTMLInputElement).value;
+    proxyPicker.sourceTouched = true;
+  });
+  document.querySelector<HTMLSelectElement>("#proxy-pool-discovered-source")?.addEventListener("change", (event) => {
+    if (!proxyPicker) return;
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    if (!value) return;
+    proxyPicker.sourceDraft = value;
+    proxyPicker.sourceTouched = true;
+    const input = document.querySelector<HTMLInputElement>("#proxy-pool-source-path");
+    if (input) input.value = value;
+  });
+  document.querySelector("#proxy-pool-source-apply")?.addEventListener("click", () => {
+    if (proxyPicker) void refreshProxyPool(proxyPicker.sourceDraft.trim());
+  });
+  document.querySelector("#proxy-pool-source-auto")?.addEventListener("click", () => void refreshProxyPool(""));
   document.querySelectorAll<HTMLElement>("[data-provider]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const nextId = btn.dataset.provider as ProviderId;
@@ -1210,14 +1519,14 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
   const submitAdd = async (openAfterSave: boolean) => {
     if (busy || modalSubmitting || modal.kind !== "add") return;
     const currentModal = modal;
-    const proxyUrl = currentModal.proxyDraft.trim();
+    const submission = state.platform === "windows"
+      ? proxySubmission(currentModal.proxyDraft, !openAfterSave)
+      : { proxyUrl: "", proxyPoolBinding: null, error: null };
     if (state.platform === "windows") {
-      currentModal.error = openAfterSave && !proxyUrl
-        ? "请先填写独立代理；也可以点击“仅保存”，稍后再配置。"
-        : validateProxyDraft(proxyUrl);
+      currentModal.error = submission.error;
       if (currentModal.error) {
         render();
-        document.querySelector<HTMLInputElement>("#modal-add-proxy-input")?.focus();
+        document.getElementById(proxyPicker?.mode === "pool" ? "proxy-pool-select" : "modal-add-proxy-input")?.focus();
         return;
       }
     }
@@ -1227,7 +1536,8 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
       await callCommand("add_account", {
         providerId: currentModal.providerId,
         alias: currentModal.draft.trim(),
-        proxyUrl,
+        proxyUrl: submission.proxyUrl,
+        proxyPoolBinding: submission.proxyPoolBinding,
         openAfterSave,
       });
     } finally {
@@ -1267,18 +1577,19 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
         alias,
       });
     } else if (currentModal.kind === "proxy") {
-      const proxyUrl = currentModal.draft.trim();
-      currentModal.error = validateProxyDraft(proxyUrl);
+      const submission = proxySubmission(currentModal.draft, proxyPicker?.mode === "manual");
+      currentModal.error = submission.error;
       if (currentModal.error) {
         render();
-        document.querySelector<HTMLInputElement>("#modal-proxy-input")?.focus();
+        document.getElementById(proxyPicker?.mode === "pool" ? "proxy-pool-select" : "modal-proxy-input")?.focus();
         return;
       }
       await setModal({ kind: "none" });
       await callCommand("set_account_proxy", {
         providerId: currentModal.account.providerId,
         uuid: currentModal.account.uuid,
-        proxyUrl,
+        proxyUrl: submission.proxyUrl,
+        proxyPoolBinding: submission.proxyPoolBinding,
       });
     } else if (currentModal.kind === "remove") {
       await setModal({ kind: "none" });
@@ -1291,6 +1602,12 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
 }
 
 async function bootstrap(): Promise<void> {
+  window.addEventListener("focus", () => {
+    if (hasProxyPicker() && !proxyPicker?.loading) void refreshProxyPool();
+  });
+  window.setInterval(() => {
+    if (hasProxyPicker() && !proxyPicker?.loading) void refreshProxyPool();
+  }, 10_000);
   await listen<ManagerSnapshot>("manager-state-changed", (event) => {
     saveScrollPosition();
     snapshot = event.payload;
