@@ -1,6 +1,6 @@
 # Muse 多账号隔离开发指引
 
-> 版本：v1.2
+> 版本：v1.3
 > 日期：2026-11-21
 > 基座项目：[ldjx7/multi-agent-account-manager](https://github.com/ldjx7/multi-agent-account-manager)
 > 目标：在现有“叠号”项目基础上，支持 Windows 优先、Android 后续的多 Muse 账号管理，并逐步增强登录态、网络和设备隔离。
@@ -46,15 +46,17 @@
 5. Android 的单 App WebView 代理通常无法让多个账号稳定并发使用不同出口。
 6. 账号关系治理没有形成可审计的数据模型。
 
-### 当前首轮实现范围（Windows，待 Rust 构建和实机验收）
+### 当前 Windows 实现进度（Rust 构建和实机验收待完成）
 
 - 账号记录新增可选 `proxyUrl`，旧版账号 JSON 读取时默认为空。
 - Windows 界面可为单个账号设置或清除 HTTP / SOCKS5 代理；代理应用到账号 WebView 和 OAuth 登录弹窗。修改后会重建该账号视图。
 - 代理 URL 仅接受协议、主机、端口；拒绝路径、查询参数和内嵌认证信息，避免凭据落入账号 JSON。
 - macOS / Android 暂不支持 per-account proxy；已有非空代理绑定时阻止启动会话，不静默忽略。
-- 账号列表显示“代理已配置 · 未验证”，空配置显示“未配置独立代理”；空配置仍遵循 Windows / WebView2 默认网络设置，不能据此认定为物理直连。
-- 这一版只实现代理绑定和会话重建，没有代理健康检查、出口 IP / DNS / WebRTC 检测或已证明的 fail-closed。界面必须将“配置完成”和“隔离验收通过”分开显示。
-- 前端 `tsc` 类型检查及 Vite 生产构建通过；标准 `npm run build` 的 esbuild 子进程在当前沙箱遇到目录访问限制，改用 Vite runner 模式构建成功。当前工作环境没有 Rust/Cargo 工具链，未能执行 `cargo check`、Rust 单测或 Windows 实机验收。
+- 切换到绑定代理的账号或预热该账号视图前，以代理服务器为入口执行一次有时限的 HTTP CONNECT 或 SOCKS5 目标连接握手；SOCKS5 把目标域名交给代理解析。DNS 查询、代理 TCP 连接和握手均有超时，检查失败时不创建目标 WebView，切号前置检查失败也保留 Rust 侧当前会话。每次切到绑定代理的账号都会重做检查，包括复用已预热的视图。
+- 切换命令失败后，前端重新读取 Rust 会话状态，避免乐观切换把仍然活动的旧账号错误显示为无活动账号。
+- 账号列表显示“已配置 · 切号时检查”；这项握手只证明检查当时代理能够建立到服务入口的连接，**不**验证公网出口 IP、国家/地区、ASN、DNS/WebRTC 实际流量路径或 WebView2 断线时的 fail-closed 行为。WebView2 子视图实际逐账号使用独立代理的能力和断代理表现仍须 Windows 实机验收。
+- 未绑定代理的账号继续遵循 Windows / WebView2 当前默认网络设置；“未配置独立代理”不能据此认定为物理直连或已实现出口隔离。
+- 已有 `npx tsc` 与 `npx vite build --configLoader runner` 的前端验证记录；当前环境未找到 Rust/Cargo 工具链，也未完成本轮变更的 Windows 实机验收。Rust 构建、握手测试和真实代理断连测试应在后续 Windows 验收时完成后再宣称通过。
 
 ## 3. 产品范围
 
@@ -198,7 +200,7 @@ RelationshipWarning
 
 ### 6.3 网络隔离
 
-首轮实现先完成“账号代理绑定”：Windows 每账号保存一个 HTTP / SOCKS5 endpoint，并在对应 WebView 及登录弹窗创建时应用；变更绑定后销毁并重建该账号会话。它便于十余账号分别绑定代理，但尚不等于强制网络隔离。代理断线时是否会发生直连、WebView2 子视图间代理设置是否完全独立、DNS / WebRTC 是否沿代理出口，均需在 Windows 真机上验证后才能宣称通过。
+当前 Windows 版本支持每个账号配置 HTTP / SOCKS5 endpoint，并将配置应用到对应 WebView 和登录弹窗；修改绑定后会重建该账号会话。打开或预热绑定代理的账号前会做有时限的 CONNECT / SOCKS5 握手，切号前再次检查。此项属于代理可用性预检，不等于对浏览器实际出口的完整检测或强制网络隔离。代理断线时是否可能直连、WebView2 子视图间代理是否完全独立、DNS / WebRTC 是否沿预期出口，均待 Windows 真机验证。
 
 首选技术验证：
 

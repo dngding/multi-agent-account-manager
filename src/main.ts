@@ -447,7 +447,8 @@ async function callCommand(
     snapshot = await invoke<ManagerSnapshot>(cmd, args);
   } catch (err) {
     if (snapshot) {
-      snapshot = { ...snapshot, notice: String(err) };
+      const currentSnapshot = await invoke<ManagerSnapshot>("get_manager_state").catch(() => snapshot!);
+      snapshot = { ...currentSnapshot, notice: String(err) };
     }
   } finally {
     optimisticSwitching = null;
@@ -797,13 +798,13 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                   <span class="account-alias">${escapeHtml(acc.alias)}</span>
                   ${shortcutHint}
                   ${alertBadgeHtml}
-                  ${supportsAccountProxy ? `<span class="proxy-status ${acc.proxyUrl ? "configured" : "direct"}">${acc.proxyUrl ? "代理已配置 · 未验证" : "未配置独立代理"}</span>` : ""}
+                  ${supportsAccountProxy ? `<span class="proxy-status ${acc.proxyUrl ? "configured" : "direct"}">${acc.proxyUrl ? "已配置 · 切号时检查" : "未配置独立代理"}</span>` : ""}
                 </div>
                 ${compactSubHtml}
               </div>
               <div class="row-ops">
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
-                ${supportsAccountProxy ? `<button class="action-icon-btn proxy-action ${acc.proxyUrl ? "configured" : ""}" data-proxy-uuid="${escapeHtml(acc.uuid)}" title="${acc.proxyUrl ? "已配置独立代理（出口未验证）" : "配置独立代理"}" type="button">${ICON_NETWORK}</button>` : ""}
+                ${supportsAccountProxy ? `<button class="action-icon-btn proxy-action ${acc.proxyUrl ? "configured" : ""}" data-proxy-uuid="${escapeHtml(acc.uuid)}" title="${acc.proxyUrl ? "已配置独立代理（切号前检查连通性）" : "配置独立代理"}" type="button">${ICON_NETWORK}</button>` : ""}
                 <button class="action-icon-btn danger" data-remove-uuid="${escapeHtml(acc.uuid)}" title="从本机移除" type="button">${ICON_TRASH}</button>
               </div>
             </div>

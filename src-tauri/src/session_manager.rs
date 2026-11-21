@@ -1867,6 +1867,65 @@ impl SessionManager {
       }
     }
 
+    #[cfg(windows)]
+    let checked_proxy_url = {
+      let locked = self.inner.lock().await;
+      if !locked.conflicts.is_empty() {
+        return Err("存在 UUID 归属冲突，已停留在管理页".to_string());
+      }
+      if !get_provider(key.provider_id).info.enabled {
+        return Err(format!("{} 尚未开放应用内嵌", get_provider(key.provider_id).info.name));
+      }
+      if locked.store.pending_cleanup.contains(&key) {
+        return Err("该账号正在清理本地资料，请稍后重试或重新创建".to_string());
+      }
+      let Some(account) = locked
+        .store
+        .accounts
+        .iter()
+        .find(|account| account.provider_id == key.provider_id && account.uuid == key.uuid)
+      else {
+        return Err("账号归属核对失败，拒绝打开未知账号".to_string());
+      };
+      account.proxy_url.clone()
+    };
+
+    #[cfg(windows)]
+    if let Some(raw_proxy) = checked_proxy_url.as_deref() {
+      let check_result = match crate::network::parse_account_proxy(raw_proxy) {
+        Ok(Some(proxy_url)) => {
+          let target_url = get_provider(key.provider_id).info.entry_url.parse::<Url>();
+          match target_url {
+            Ok(target_url) => crate::network::check_proxy_route(proxy_url, target_url).await,
+            Err(error) => Err(format!("服务入口地址错误: {error}")),
+          }
+        }
+        Ok(None) => Err("账号代理配置为空，请重新保存代理设置".to_string()),
+        Err(error) => Err(error),
+      };
+      if let Err(error) = check_result {
+        let notice = format!("代理连通性检查失败，已阻止打开该账号：{error}");
+        let snapshot = {
+          let mut locked = self.inner.lock().await;
+          if locked
+            .store
+            .accounts
+            .iter()
+            .any(|account| {
+              account.provider_id == key.provider_id
+                && account.uuid == key.uuid
+                && account.proxy_url == checked_proxy_url
+            })
+          {
+            locked.notice = Some(notice.clone());
+          }
+          Self::snapshot_from_locked(&locked)
+        };
+        self.emit_snapshot(app, &snapshot);
+        return Err(notice);
+      }
+    }
+
     let next_seq = self.current_seq.fetch_add(1, Ordering::SeqCst) + 1;
 
     #[cfg(desktop)]
@@ -1911,6 +1970,11 @@ impl SessionManager {
             locked.notice = Some("账号归属核对失败，已回到管理页".to_string());
             return Ok(Self::snapshot_from_locked(&locked));
           };
+
+          #[cfg(windows)]
+          if acc.proxy_url != checked_proxy_url {
+            return Err("代理设置在检查期间已更新，请重新尝试打开账号".to_string());
+          }
 
           locked.selected_provider_id = key.provider_id;
           locked.notice = None;
@@ -2698,6 +2762,17 @@ impl SessionManager {
     #[cfg(not(windows))]
     if proxy_url.is_some() {
       return Err("每账号独立代理目前仅支持 Windows 桌面版".to_string());
+    }
+    #[cfg(windows)]
+    if let Some(proxy_url) = proxy_url.clone() {
+      let entry_url: Url = get_provider(account.provider_id)
+        .info
+        .entry_url
+        .parse()
+        .map_err(|error| format!("服务入口地址错误: {error}"))?;
+      crate::network::check_proxy_route(proxy_url, entry_url)
+        .await
+        .map_err(|error| format!("预热前代理连通性检查失败，未创建账号视图：{error}"))?;
     }
     let profile_dir = app_data_dir.join("profiles").join(&account.uuid);
 
