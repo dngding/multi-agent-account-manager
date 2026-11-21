@@ -3296,7 +3296,9 @@ impl SessionManager {
         return;
       }
       if !locked.conflicts.is_empty() || locked.store.pending_cleanup.contains(&key) {
-        self.hide_foreground_slot(app, expected_seq, &mut locked).await;
+        self
+          .hide_foreground_slot(app, expected_seq, &mut locked)
+          .await;
         return;
       }
       let Some(acc) = locked
@@ -3553,7 +3555,10 @@ impl SessionManager {
     let inner_json = serde_json::from_str::<String>(&raw).ok()?;
     let val = serde_json::from_str::<serde_json::Value>(&inner_json).ok()?;
     let is_auth = val.get("auth").and_then(|v| v.as_bool()).unwrap_or(false);
-    let logged_out = val.get("loggedOut").and_then(|v| v.as_bool()).unwrap_or(false);
+    let logged_out = val
+      .get("loggedOut")
+      .and_then(|v| v.as_bool())
+      .unwrap_or(false);
     let typed = val
       .get("typed")
       .and_then(|v| v.as_str())
@@ -3624,12 +3629,7 @@ impl SessionManager {
     }
   }
 
-  async fn apply_logged_out_state(
-    &self,
-    app: &AppHandle,
-    key: AccountKey,
-    view_instance_id: u64,
-  ) {
+  async fn apply_logged_out_state(&self, app: &AppHandle, key: AccountKey, view_instance_id: u64) {
     let snap_opt = {
       let mut locked = self.inner.lock().await;
       if !Self::is_view_instance_valid(&locked, &key, view_instance_id) {
@@ -3718,7 +3718,10 @@ impl SessionManager {
       }
 
       if let Some(av) = avatar_opt {
-        if av.starts_with("data:image/") && av.len() < 80_000 && target.avatar_url.as_ref() != Some(&av) {
+        if av.starts_with("data:image/")
+          && av.len() < 80_000
+          && target.avatar_url.as_ref() != Some(&av)
+        {
           target.avatar_url = Some(av);
           changed = true;
         }
@@ -3736,8 +3739,14 @@ impl SessionManager {
         if !cleaned_qt.is_empty() && cleaned_qt.len() <= 60 {
           let is_placeholder = cleaned_qt == "额度充足" || cleaned_qt == "正在同步额度…";
           let should_overwrite = match (&target.quota_text, is_placeholder) {
-            (Some(existing), true) if existing != "额度充足" && existing != "正在同步额度…" => false,
-            (Some(existing), _) if existing == cleaned_qt && target.quota_percent == quota_pct_opt => false,
+            (Some(existing), true) if existing != "额度充足" && existing != "正在同步额度…" => {
+              false
+            }
+            (Some(existing), _)
+              if existing == cleaned_qt && target.quota_percent == quota_pct_opt =>
+            {
+              false
+            }
             _ => true,
           };
           if should_overwrite {
