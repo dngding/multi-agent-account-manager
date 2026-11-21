@@ -390,6 +390,36 @@ mod tests {
 
   #[cfg(windows)]
   #[test]
+  fn rejects_proxy_that_disconnects_during_http_tunnel() {
+    use super::check_proxy_route_sync;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::thread;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let proxy = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().unwrap();
+      let mut request = Vec::new();
+      let mut byte = [0u8; 1];
+      while !request.ends_with(b"\r\n\r\n") {
+        if stream.read_exact(&mut byte).is_err() {
+          return;
+        }
+        request.push(byte[0]);
+      }
+      let _ = stream.write_all(b"HTTP/1.1 200 Connection established\r\n");
+      drop(stream);
+    });
+
+    let proxy_url = Url::parse(&format!("http://{address}")).unwrap();
+    let target_url = Url::parse("https://muse.ai/").unwrap();
+    assert!(check_proxy_route_sync(&[address], &proxy_url, &target_url).is_err());
+    proxy.join().unwrap();
+  }
+
+  #[cfg(windows)]
+  #[test]
   fn checks_socks5_remote_dns_and_target_connect() {
     use super::check_proxy_route_sync;
     use std::io::{Read, Write};

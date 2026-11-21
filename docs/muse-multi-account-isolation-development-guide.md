@@ -1,6 +1,6 @@
 # Muse 多账号隔离开发指引
 
-> 版本：v1.5
+> 版本：v1.6
 > 日期：2026-11-21
 > 基座项目：[ldjx7/multi-agent-account-manager](https://github.com/ldjx7/multi-agent-account-manager)
 > 目标：在现有“叠号”项目基础上，支持 Windows 优先、Android 后续的多 Muse 账号管理，并逐步增强登录态、网络和设备隔离。
@@ -59,6 +59,7 @@
 - 账号列表显示“已配置 · 切号时检查”；这项握手和后台复核只证明检查时代理能够建立到服务入口的连接，**不**验证公网出口 IP、国家/地区、ASN、DNS/WebRTC 实际流量路径或系统级 fail-closed 行为。WebView2 子视图实际逐账号使用独立代理的能力和断代理表现仍须 Windows 实机验收。
 - 未绑定代理的账号继续遵循 Windows / WebView2 当前默认网络设置；“未配置独立代理”不能据此认定为物理直连或已实现出口隔离。
 - 本轮 `tsc --noEmit`、Vite 生产构建和 `git diff --check` 均通过；仓库新增 Windows CI，在推送当前功能分支时自动运行前端构建、Rust 单测，并将变更文件的 rustfmt 检查作为提示项。基座仍有未改动 Rust 文件存在历史格式差异，因此格式提示不阻断单测。当前执行环境没有 Rust/Cargo 工具链，因此尚未本地运行 Rust 检查；Windows CI 和 WebView2 实机验收结果需在工作流运行后确认。真实代理断连测试通过前，不应宣称已实现系统级 fail-closed。
+- 已加入 Windows 代理断线验收手册和本地 HTTP CONNECT 转发代理脚本；它用于真实 WebView2 的“先连通、再停止代理、观察关闭和重开阻断”测试，不接收或保存代理凭据。验收脚本已在本地验证 CONNECT 200、目标请求转发和停止后端口关闭，Rust 单测另覆盖代理在 HTTP 隧道握手中途断开；这些结果都不能替代真实 WebView2 故障注入。
 
 ## 3. 产品范围
 
@@ -306,7 +307,7 @@ Android 验收要求：
 
 当前部分进展：已增加每次切号前和预热前的代理主机解析、TCP 连通及 HTTP CONNECT / SOCKS5 服务入口握手预检，配有时限；切号并发时旧检查不会覆盖或取消较新的账号切换。检查失败即阻止目标账号，并保留目前活动会话。该检查不等于 WebView2 请求已验证从配置代理出站，也不等于代理故障时已禁止直连。
 
-仓库新增 Windows CI，推送功能分支时自动运行前端生产构建、Rust 格式检查及 Windows Rust 单测，以便在 Windows runner 上验证本地无法执行的代理握手和账号关系检查测试。
+仓库新增 Windows CI，推送功能分支时自动运行前端生产构建、Rust 格式检查及 Windows Rust 单测，以便在 Windows runner 上验证本地无法执行的代理握手和账号关系检查测试。具体实机步骤见 [`docs/windows-proxy-disconnect-acceptance.md`](windows-proxy-disconnect-acceptance.md)。
 
 - 实现按账号本地代理端口。
 - 实现上游代理健康检查和 fail-closed。
