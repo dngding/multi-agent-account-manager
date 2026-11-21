@@ -4,6 +4,15 @@
 
 ## 1. 准备
 
+Windows 验收应使用本分支支持的 `DIEHAO_DATA_DIR` 指定全新、空白的绝对目录，同时隔离账号配置、账号 WebView2 profile 和管理页 WebView2 缓存。不要复制生产 Cookie、token 或账号配置到验收目录；只使用测试别名。默认数据目录来自 Tauri 的 `app_data_dir()`（通常为 `%APPDATA%\com.ldjx.accountmanager`），**不是**其他应用的 `muse-web`。Windows Known Folder API 可能忽略进程级 `APPDATA` 覆盖，不能用修改 `APPDATA` 代替本选项。
+
+```powershell
+$testRoot = Join-Path $env:TEMP ('diehao-acceptance-' + [guid]::NewGuid().ToString('N'))
+$env:DIEHAO_DATA_DIR = $testRoot
+```
+
+仅在当前测试进程环境设置此变量，不修改系统环境变量。空字符串、相对路径或无法创建的目录会导致启动失败，不会回退到生产目录。启动后确认 `$testRoot\manager-webview` 已生成，新增测试别名后确认 `$testRoot\accounts.json` 和 `$testRoot\profiles\<uuid>`；记录生产数据前后哈希一致。不要同时打开两个使用相同数据目录的应用实例。
+
 在项目根目录打开两个 PowerShell 窗口。第一窗口启动本地 HTTP CONNECT 转发代理：
 
 ```powershell
@@ -27,7 +36,7 @@ npm run tauri dev
 
 1. 在“叠号”中新增或选择一个测试账号 A。
 2. 给 A 配置 `http://127.0.0.1:<port>`，保存后重新打开 A。
-3. 等待 Muse 页面完成加载，确认账号 A 可以正常操作。
+3. 等待 Muse 页面完成加载。可先使用不登录的测试 profile 验证断线保护；这只能证明公开页面行为，已登录账号操作必须另行验收。
 4. 如有第二个测试账号 B，给 B 配置另一个可用代理并打开 B，确认 B 的页面正常。
 
 ## 3. 断线
@@ -69,3 +78,5 @@ cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-p
 该命令覆盖代理地址校验、HTTP CONNECT / SOCKS5 握手、认证拒绝、截断响应、超大响应、代理握手中途断开，以及账号共享代理检测。真实 WebView2 断线结果必须按本手册操作记录，Rust 单测不能替代它。
 
 推送功能分支后，`Windows validation` 工作流会在单测通过后继续构建 NSIS 安装包，并以 `windows-x64-nsis-acceptance` artifact 上传。该安装包用于本手册的实机验收；若安装包构建失败，单测通过也不代表桌面应用可交付。
+
+该 artifact 同时包含独立 EXE，解压后可直接运行进行验收，无需覆盖已安装版本。测试结束关闭本次应用、停止本次代理，清理测试目录；不要清理默认生产目录。

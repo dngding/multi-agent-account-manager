@@ -1,3 +1,5 @@
+#[cfg(any(windows, test))]
+mod app_paths;
 mod network;
 mod platform;
 mod providers;
@@ -147,7 +149,12 @@ pub fn run() {
   builder
     .setup(|app| {
       let app_data_dir = app.path().app_data_dir()?;
-      let session_mgr = Arc::new(SessionManager::new(app_data_dir));
+      #[cfg(windows)]
+      let app_data_dir =
+        app_paths::resolve_data_dir(app_data_dir, std::env::var_os("DIEHAO_DATA_DIR"))?;
+      #[cfg(windows)]
+      std::fs::create_dir_all(&app_data_dir)?;
+      let session_mgr = Arc::new(SessionManager::new(app_data_dir.clone()));
       app.manage(Arc::clone(&session_mgr));
 
       #[cfg(desktop)]
@@ -167,6 +174,10 @@ pub fn run() {
             || url.domain() == Some("tauri.localhost")
             || (cfg!(dev) && url.host_str() == Some("localhost"))
         });
+
+        // Keep the local management WebView in the same selected data root as accounts.
+        #[cfg(windows)]
+        let manager_builder = manager_builder.data_directory(app_data_dir.join("manager-webview"));
 
         main_window.add_child(
           manager_builder,
