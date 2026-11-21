@@ -14,8 +14,8 @@
 | **Hark** | 已启用 | 独立会话隔离、额度与余额同步 |
 
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
-- **Windows 按账号代理（功能分支）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。新增支持“仅保存 / 检查并打开”：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。最终源码 `4dce77d` 的 Windows Rust 测试 23/23、独立 EXE 和 NSIS 构建通过；两个未登录测试账号已完成新增流程、后台中断状态更新，以及最终版清空代理、阻止重开和重启恢复回归，见[本轮验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。界面“预检通过”仅表示有限握手检查，不代表公网出口、DNS / WebRTC、系统级拒绝直连、设备或账号关系隔离已验证。
-- **从现有代理池选择（新增，待验收）**：Windows 新增账号默认读取现有本地 YAML 固定端口池，支持搜索、来源选择、手动刷新及每 10 秒 / 窗口恢复焦点时同步。入口删除或目标变化需重新确认，不自动替换已绑定账号；保留手动地址。来源只读，Telegram 占用未知，配置一致性不证明运行中代理已重载或公网出口独立。本项 Windows CI 与实机仍待验收，见[使用说明](docs/existing-proxy-pool-setup.md)。
+- **Windows 按账号代理（功能分支）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。新增支持“仅保存 / 检查并打开”：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。历史新增流程基线 `4dce77d` 的 Windows Rust 测试 23/23、独立 EXE 和 NSIS 构建通过；两个未登录测试账号已完成新增流程、后台中断状态更新，以及该版清空代理、阻止重开和重启恢复回归，版本归属见[2026-11-21 验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。界面“预检通过”仅表示有限握手检查，不代表公网出口、DNS / WebRTC、系统级拒绝直连、设备或账号关系隔离已验证。
+- **从现有代理池选择**：Windows 新增账号默认读取现有本地 YAML 固定端口池，支持搜索、来源选择、手动刷新及每 10 秒 / 窗口恢复焦点时同步。入口删除或目标变化需重新确认，不自动替换已绑定账号；保留手动地址。最终 `01c596d` Windows Rust 42/42、EXE / NSIS 构建通过；合成池候选变化在 `a4ac022` 实测，最终版另通过保存绑定、定义漂移关闭 A、重开阻断与 B 保留。真实池 / 机场链路、分项刷新和其他未覆盖项见[验收记录](docs/windows-proxy-pool-acceptance-results.md)。来源只读，Telegram 占用未知，配置一致性不证明运行中代理已重载或公网出口独立，操作见[使用说明](docs/existing-proxy-pool-setup.md)。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
 - **应用内检查更新**：支持在客户端内检查 GitHub Releases 最新版本、带进度条下载、`SHA-256` 校验及覆盖更新。
 
@@ -54,9 +54,9 @@
 
 Windows 按账号代理增强在用户 fork 的 `codex/windows-account-proxy` 功能分支开发。进入 [dngding 仓库的 Windows CI](https://github.com/dngding/multi-agent-account-manager/actions/workflows/windows-ci.yml?query=branch%3Acodex%2Fwindows-account-proxy)，选择该分支中**源码提交匹配、构建成功**的运行，在页面底部下载 `windows-x64-nsis-acceptance` artifact。它包含独立 EXE 和 NSIS 安装器；下载 artifact 通常需要登录 GitHub。
 
-本轮构建来自 [4dce77d 的成功 CI](https://github.com/dngding/multi-agent-account-manager/actions/runs/44915899771)，测试范围和文件哈希见[验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。首次使用仍建议按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)，用独立 EXE 和全新测试数据目录检查自己的代理链路，再用于正式账号。
+本轮构建来自 [01c596d 的成功 CI](https://github.com/dngding/multi-agent-account-manager/actions/runs/44926476039)，可直接进入[最终 artifact 下载页](https://github.com/dngding/multi-agent-account-manager/actions/runs/44926476039/artifacts/14715672060)。Rust 42/42，测试归属、未覆盖项与文件哈希见[代理池验收记录](docs/windows-proxy-pool-acceptance-results.md)。此前 `4dce77d` 新增流程与后台状态的历史基线见[2026-11-21 报告](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。首次使用仍建议按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)，用独立 EXE 和全新测试数据目录检查自己的代理链路，再用于正式账号。
 
-已有 Telegram Panel / Mihomo 本地固定端口池时，可按[从现有代理池选择](docs/existing-proxy-pool-setup.md)使用新选择器，无需为叠号重复导入机场订阅或再开代理服务。该选择器不包含在上述 `4dce77d` 构建中；新功能 CI 和实机尚待验收，应下载源码提交匹配且验证完成的后续构建。
+已有 Telegram Panel / Mihomo 本地固定端口池时，可按[从现有代理池选择](docs/existing-proxy-pool-setup.md)使用选择器，无需为叠号重复导入机场订阅或再开代理服务。选择器包含在上述 `01c596d` 构建中；真实机场链路仍需用空白 profile 单独核验，不能把合成配置验收当成现有生产池已通过。
 
 没有现成代理池时，机场订阅接入和固定账号端口配置见[机场订阅 → Mihomo 配置指引](docs/airport-subscription-proxy-setup.md)。订阅链接先由代理客户端解析，叠号使用固定 HTTP / SOCKS5 端口；现有池选择器只读固定入口配置，不直接解析订阅。
 
