@@ -2,6 +2,8 @@
 
 这份流程验证的是 Windows WebView2 应用层行为：账号绑定代理后，代理运行时断开，账号视图应被关闭，且代理恢复前不能重新打开。它不替代公网出口、DNS、WebRTC 或系统防火墙级别的验证。
 
+已执行的限定场景和截图见 [2026-11-21 实机验收记录](windows-proxy-acceptance-results-2026-11-21.md)。
+
 ## 1. 准备
 
 Windows 验收应使用本分支支持的 `DIEHAO_DATA_DIR` 指定全新、空白的绝对目录，同时隔离账号配置、账号 WebView2 profile 和管理页 WebView2 缓存。不要复制生产 Cookie、token 或账号配置到验收目录；只使用测试别名。默认数据目录来自 Tauri 的 `app_data_dir()`（通常为 `%APPDATA%\com.ldjx.accountmanager`），**不是**其他应用的 `muse-web`。Windows Known Folder API 可能忽略进程级 `APPDATA` 覆盖，不能用修改 `APPDATA` 代替本选项。
@@ -43,6 +45,7 @@ npm run tauri dev
 
 1. 回到运行本地代理的窗口，按 `Ctrl+C` 停止代理。
 2. 保持叠号窗口打开，等待最多约 15 秒。当前观察器在启动阶段快速检查，随后约每 6.5 秒复核一次；连续两次失败后会关闭 A 的 WebView。
+   这里的约 15 秒只适用于停止本地监听后连接立即被拒绝的故障注入；DNS、TCP 或握手黑洞会消耗各自超时，不承诺所有网络故障均在 15 秒内完成阻断。
 3. 通过以下现象判定应用层断线保护生效：
    - A 的页面消失，管理页重新显示；
    - 页面提示包含“代理连接中断，已关闭该账号视图”；

@@ -14,7 +14,7 @@
 | **Hark** | 已启用 | 独立会话隔离、额度与余额同步 |
 
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
-- **Windows 按账号代理（开发中）**：可为账号 WebView 与登录弹窗分别配置 HTTP / SOCKS5 代理。状态仅表示已配置；代理出口、DNS / WebRTC 泄漏和代理断开后的直连行为尚未验证，此能力不代表设备或账号关系隔离。
+- **Windows 按账号代理（开发中）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。两个未登录 profile 已完成本地 HTTP 代理断线、阻止重开、恢复和重启实测，见[验收记录](docs/windows-proxy-acceptance-results-2026-11-21.md)。公网出口、DNS / WebRTC 和系统级断线拒绝直连仍待验证，此能力不代表设备或账号关系隔离。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
 - **应用内检查更新**：支持在客户端内检查 GitHub Releases 最新版本、带进度条下载、`SHA-256` 校验及覆盖更新。
 
