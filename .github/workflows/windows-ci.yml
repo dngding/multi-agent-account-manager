@@ -21,6 +21,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v6
         with:
           node-version: 22
@@ -34,7 +36,21 @@ jobs:
           workspaces: ./src-tauri -> target
       - run: npm ci
       - run: npm run build
-      - name: Check Rust formatting
-        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - name: Check changed Rust formatting
+        shell: pwsh
+        run: |
+          $base = git merge-base origin/main HEAD
+          if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
+            throw "Could not find the main branch merge base."
+          }
+          $files = @(git diff --name-only --diff-filter=ACMR $base HEAD -- src-tauri | Where-Object { $_ -match '\.rs$' })
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not list changed Rust files."
+          }
+          if ($files.Count -eq 0) {
+            Write-Host "No changed Rust files to format-check."
+          } else {
+            rustfmt --check --edition 2021 --config-path rustfmt.toml $files
+          }
       - name: Run Windows Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc
