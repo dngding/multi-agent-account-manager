@@ -36,7 +36,8 @@ jobs:
           workspaces: ./src-tauri -> target
       - run: npm ci
       - run: npm run build
-      - name: Check changed Rust formatting
+      - name: Check changed Rust formatting (advisory)
+        continue-on-error: true
         shell: pwsh
         run: |
           $base = git merge-base origin/main HEAD

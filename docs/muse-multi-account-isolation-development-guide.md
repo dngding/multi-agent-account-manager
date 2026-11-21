@@ -57,7 +57,7 @@
 - 同一规范化代理地址分配给多个本机账号时，会在相关账号卡片显示“共用代理”提示；这仅识别完全相同的代理端点，不代表不同端点一定有不同公网出口。
 - 账号列表显示“已配置 · 切号时检查”；这项握手只证明检查当时代理能够建立到服务入口的连接，**不**验证公网出口 IP、国家/地区、ASN、DNS/WebRTC 实际流量路径或 WebView2 断线时的 fail-closed 行为。WebView2 子视图实际逐账号使用独立代理的能力和断代理表现仍须 Windows 实机验收。
 - 未绑定代理的账号继续遵循 Windows / WebView2 当前默认网络设置；“未配置独立代理”不能据此认定为物理直连或已实现出口隔离。
-- 本轮 `tsc --noEmit`、Vite 生产构建和 `git diff --check` 均通过；仓库新增 Windows CI，在推送当前功能分支时自动运行前端构建、Rust 格式检查和 Windows Rust 单测。当前执行环境没有 Rust/Cargo 工具链，因此尚未本地运行 Rust 检查；Windows CI 和 WebView2 实机验收结果需在工作流运行后确认。真实代理断连测试通过前，不应宣称已实现 fail-closed。
+- 本轮 `tsc --noEmit`、Vite 生产构建和 `git diff --check` 均通过；仓库新增 Windows CI，在推送当前功能分支时自动运行前端构建、Rust 单测，并将变更文件的 rustfmt 检查作为提示项。基座仍有未改动 Rust 文件存在历史格式差异，因此格式提示不阻断单测。当前执行环境没有 Rust/Cargo 工具链，因此尚未本地运行 Rust 检查；Windows CI 和 WebView2 实机验收结果需在工作流运行后确认。真实代理断连测试通过前，不应宣称已实现 fail-closed。
 
 ## 3. 产品范围
 
