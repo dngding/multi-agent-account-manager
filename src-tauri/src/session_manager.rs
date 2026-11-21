@@ -1500,7 +1500,7 @@ impl SessionManager {
 
   #[cfg(windows)]
   pub async fn set_account_proxy(
-    &self,
+    self: &Arc<Self>,
     app: &AppHandle,
     raw_provider: &str,
     raw_uuid: &str,
