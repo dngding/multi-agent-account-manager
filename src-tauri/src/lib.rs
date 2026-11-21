@@ -32,8 +32,18 @@ async fn add_account(
   mgr: State<'_, Arc<SessionManager>>,
   provider_id: String,
   alias: String,
+  proxy_url: Option<String>,
+  open_after_save: Option<bool>,
 ) -> Result<ManagerSnapshot, String> {
-  mgr.add_account(&app, &provider_id, &alias).await
+  mgr
+    .add_account(
+      &app,
+      &provider_id,
+      &alias,
+      proxy_url.as_deref().unwrap_or(""),
+      open_after_save.unwrap_or(true),
+    )
+    .await
 }
 
 #[tauri::command]

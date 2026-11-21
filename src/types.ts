@@ -41,6 +41,13 @@ export interface AccountRecord {
   quotaDetail: QuotaDetail | null;
   authState: AuthState;
   proxyUrl: string | null;
+  proxyRequired: boolean;
+  pendingActivation: boolean;
+}
+
+export interface AccountNetworkState extends AccountKey {
+  status: "pending" | "checking" | "ready" | "interrupted";
+  message: string | null;
 }
 
 export interface ConflictItem {
@@ -60,6 +67,7 @@ export interface ManagerSnapshot {
   pendingCleanup: AccountKey[];
   conflicts: ConflictItem[];
   sharedProxyAccounts: AccountKey[];
+  accountNetworkStates: AccountNetworkState[];
   notice: string | null;
   modalActive: boolean;
 }

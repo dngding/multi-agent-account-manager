@@ -923,6 +923,29 @@ body,
   color: #c2410c;
 }
 
+.proxy-status.pending,
+.proxy-status.checking {
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.proxy-status.interrupted {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.account-network-notice {
+  margin-top: 5px;
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  color: #92400e;
+}
+
+.account-network-notice.interrupted {
+  color: #b91c1c;
+}
+
 .proxy-action.configured {
   color: #2563eb;
 }
@@ -1039,6 +1062,22 @@ body,
   font-size: 12px;
   color: var(--text-sub);
   line-height: 1.55;
+}
+
+.modal-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.modal-error {
+  padding: 8px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #b91c1c;
 }
 
 .modal-input {

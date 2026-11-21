@@ -68,6 +68,20 @@ pub struct AccountRecord {
   pub auth_state: AuthState,
   #[serde(default)]
   pub proxy_url: Option<String>,
+  #[serde(default, alias = "proxy_required")]
+  pub proxy_required: bool,
+  #[serde(default, alias = "pending_activation")]
+  pub pending_activation: bool,
+}
+
+impl AccountRecord {
+  pub fn validated_proxy(&self) -> Result<Option<url::Url>, String> {
+    let proxy = crate::network::parse_account_proxy(self.proxy_url.as_deref().unwrap_or(""))?;
+    if self.proxy_required && proxy.is_none() {
+      return Err("该账号必须先配置代理，已阻止打开".to_string());
+    }
+    Ok(proxy)
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,8 +140,11 @@ impl Default for AccountsStoreFile {
 
 #[cfg(test)]
 mod tests {
-  use super::{detect_shared_proxy_accounts, AccountRecord};
+  use super::{detect_shared_proxy_accounts, migrate_from_value, AccountRecord, AccountsStoreFile};
   use crate::providers::ProviderId;
+  use serde_json::json;
+
+  const TEST_UUID: &str = "11111111-1111-4111-8111-111111111111";
 
   fn account(uuid: &str, proxy_url: Option<&str>) -> AccountRecord {
     AccountRecord {
@@ -142,6 +159,8 @@ mod tests {
       quota_detail: None,
       auth_state: Default::default(),
       proxy_url: proxy_url.map(str::to_string),
+      proxy_required: false,
+      pending_activation: false,
     }
   }
 
@@ -169,6 +188,124 @@ mod tests {
     ];
 
     assert!(detect_shared_proxy_accounts(&accounts).is_empty());
+  }
+
+  #[test]
+  fn old_v1_and_v2_accounts_keep_optional_proxy_policy() {
+    for version in [1, 2] {
+      let mut entry = json!({
+        "uuid": TEST_UUID,
+        "alias": "legacy-account",
+        "createdAtMs": 0
+      });
+      if version == 2 {
+        entry["providerId"] = json!("muse");
+      }
+      let (store, migrated) = migrate_from_value(json!({
+        "version": version,
+        "accounts": [entry]
+      }))
+      .unwrap();
+      assert_eq!(migrated, version == 1);
+      assert!(!store.accounts[0].proxy_required);
+      assert!(!store.accounts[0].pending_activation);
+      assert_eq!(store.accounts[0].validated_proxy().unwrap(), None);
+    }
+  }
+
+  #[test]
+  fn deserializing_old_record_defaults_to_optional_proxy() {
+    let entry: AccountRecord = serde_json::from_value(json!({
+      "providerId": "muse",
+      "uuid": TEST_UUID,
+      "alias": "legacy-account",
+      "createdAtMs": 0
+    }))
+    .unwrap();
+    assert!(!entry.proxy_required);
+    assert!(!entry.pending_activation);
+    assert_eq!(entry.validated_proxy().unwrap(), None);
+  }
+
+  #[test]
+  fn proxy_policy_and_activation_survive_migration_and_serialization() {
+    for (required_field, activation_field) in [
+      ("proxyRequired", "pendingActivation"),
+      ("proxy_required", "pending_activation"),
+    ] {
+      let original = account(TEST_UUID, Some("http://127.0.0.1:8080"));
+      let mut entry = serde_json::to_value(original).unwrap();
+      entry.as_object_mut().unwrap().remove("proxyRequired");
+      entry.as_object_mut().unwrap().remove("pendingActivation");
+      entry[required_field] = json!(true);
+      entry[activation_field] = json!(true);
+      let (store, _) = migrate_from_value(json!({
+        "version": 2,
+        "accounts": [entry]
+      }))
+      .unwrap();
+      assert!(store.accounts[0].proxy_required);
+      assert!(store.accounts[0].pending_activation);
+
+      let saved = serde_json::to_value(&store).unwrap();
+      assert_eq!(saved["accounts"][0]["proxyRequired"], json!(true));
+      assert_eq!(saved["accounts"][0]["pendingActivation"], json!(true));
+      let deserialized: AccountsStoreFile = serde_json::from_value(saved.clone()).unwrap();
+      assert!(deserialized.accounts[0].proxy_required);
+      assert!(deserialized.accounts[0].pending_activation);
+      let (reloaded, _) = migrate_from_value(saved).unwrap();
+      assert!(reloaded.accounts[0].proxy_required);
+      assert!(reloaded.accounts[0].pending_activation);
+      let endpoint = reloaded.accounts[0].validated_proxy().unwrap().unwrap();
+      assert_eq!(endpoint.as_str(), "http://127.0.0.1:8080/");
+
+      let mut activated = reloaded;
+      activated.accounts[0].pending_activation = false;
+      let (activated, _) = migrate_from_value(serde_json::to_value(activated).unwrap()).unwrap();
+      assert!(!activated.accounts[0].pending_activation);
+      assert!(activated.accounts[0].proxy_required);
+    }
+  }
+
+  #[test]
+  fn malformed_account_policy_is_not_silently_disabled() {
+    for field in ["proxyRequired", "pendingActivation"] {
+      for invalid in [json!(null), json!("true"), json!(1)] {
+        let mut entry = serde_json::to_value(account(TEST_UUID, None)).unwrap();
+        entry[field] = invalid;
+        assert!(migrate_from_value(json!({
+          "version": 2,
+          "accounts": [entry]
+        }))
+        .is_err());
+      }
+    }
+  }
+
+  #[test]
+  fn required_proxy_rejects_missing_empty_and_invalid_endpoints() {
+    for proxy in [
+      None,
+      Some(""),
+      Some(" \t "),
+      Some("not-a-proxy"),
+      Some("http://proxy.example"),
+    ] {
+      let mut entry = account(TEST_UUID, proxy);
+      entry.proxy_required = true;
+      assert!(entry.validated_proxy().is_err(), "unexpectedly allowed {proxy:?}");
+    }
+  }
+
+  #[test]
+  fn required_proxy_accepts_valid_endpoints_and_legacy_can_remain_unbound() {
+    for proxy in ["http://127.0.0.1:8080", "socks5://127.0.0.1:1080"] {
+      let mut entry = account(TEST_UUID, Some(proxy));
+      entry.proxy_required = true;
+      assert!(entry.validated_proxy().unwrap().is_some());
+    }
+    assert_eq!(account(TEST_UUID, None).validated_proxy().unwrap(), None);
+    assert!(account(TEST_UUID, Some("not-a-proxy")).validated_proxy().is_err());
   }
 }
 
@@ -324,6 +461,20 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
         quota_text = None;
         quota_percent = None;
       }
+      let proxy_required = match item_obj
+        .get("proxyRequired")
+        .or_else(|| item_obj.get("proxy_required"))
+      {
+        Some(value) => value.as_bool().ok_or_else(|| "proxyRequired 必须是布尔值".to_string())?,
+        None => false,
+      };
+      let pending_activation = match item_obj
+        .get("pendingActivation")
+        .or_else(|| item_obj.get("pending_activation"))
+      {
+        Some(value) => value.as_bool().ok_or_else(|| "pendingActivation 必须是布尔值".to_string())?,
+        None => false,
+      };
 
       accounts.push(AccountRecord {
         provider_id,
@@ -343,6 +494,8 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
           .map(str::trim)
           .filter(|value| !value.is_empty())
           .map(str::to_string),
+        proxy_required,
+        pending_activation,
       });
     }
   }

@@ -15,9 +15,9 @@ import type {
 
 type ModalMode =
   | { kind: "none" }
-  | { kind: "add"; providerId: ProviderId; draft: string }
+  | { kind: "add"; providerId: ProviderId; draft: string; proxyDraft: string; error: string | null }
   | { kind: "rename"; account: AccountRecord; draft: string }
-  | { kind: "proxy"; account: AccountRecord; draft: string }
+  | { kind: "proxy"; account: AccountRecord; draft: string; error: string | null }
   | { kind: "remove"; account: AccountRecord }
   | { kind: "update" };
 
@@ -38,6 +38,7 @@ let snapshot: ManagerSnapshot | null = null;
 let modal: ModalMode = { kind: "none" };
 let optimisticSwitching: AccountKey | null = null;
 let busy = false;
+let modalSubmitting = false;
 let lastRenderedUpdateStage: string | null = null;
 
 const updateState: {
@@ -78,6 +79,59 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+function validateProxyDraft(value: string): string | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "socks5:") {
+      return "请填写 HTTP 或 SOCKS5 代理端口；机场订阅链接需先导入 Mihomo 等客户端。";
+    }
+    if (!url.hostname || !url.port || (url.pathname && url.pathname !== "/") || url.search || url.hash) {
+      return "代理地址只填写协议、主机和端口，例如 http://127.0.0.1:18081。";
+    }
+    if (url.username || url.password) {
+      return "这里暂不支持代理用户名和密码，请由本地代理客户端处理上游认证。";
+    }
+    return null;
+  } catch {
+    return "代理地址格式错误，例如 http://127.0.0.1:18081。";
+  }
+}
+
+function accountNetworkPresentation(state: ManagerSnapshot, account: AccountRecord): {
+  className: string;
+  label: string;
+  message: string | null;
+} {
+  const networkState = (state.accountNetworkStates ?? []).find(
+    (entry) => entry.providerId === account.providerId && entry.uuid === account.uuid
+  );
+  if (account.proxyRequired && !account.proxyUrl) {
+    return { className: "pending", label: "待配置 · 已阻止打开", message: "设置独立代理后才能打开此账号。" };
+  }
+  if (networkState?.status === "interrupted") {
+    return { className: "interrupted", label: "代理中断 · 已阻止打开", message: networkState.message };
+  }
+  if (networkState?.status === "checking") {
+    return { className: "checking", label: "正在检查代理…", message: null };
+  }
+  const running = isSameKey(state.activeAccount, account) || state.warmAccounts.some(
+    (key) => key.providerId === account.providerId && key.uuid === account.uuid
+  );
+  if (account.proxyUrl) {
+    return {
+      className: "configured",
+      label: account.pendingActivation
+        ? "已配置 · 待打开"
+        : running && networkState?.status === "ready"
+          ? "已打开 · 代理正常"
+          : "已配置 · 打开时检查",
+      message: null,
+    };
+  }
+  return { className: "direct", label: "旧账号 · 系统默认网络", message: null };
 }
 
 function renderProviderLogo(id: ProviderId, extraClass = ""): string {
@@ -437,9 +491,6 @@ async function callCommand(
   saveScrollPosition();
   if (optimisticTarget) {
     optimisticSwitching = optimisticTarget;
-    if (snapshot) {
-      snapshot = { ...snapshot, activeAccount: null };
-    }
     render();
     restoreScrollPosition();
   }
@@ -580,15 +631,25 @@ function renderModal(provider: ProviderInfo): string {
     return renderUpdateModal();
   }
   if (modal.kind === "add") {
+    const supportsAccountProxy = snapshot?.platform === "windows";
     return `
       <div class="inline-modal" role="dialog" aria-modal="true">
         <div class="modal-card">
           <div class="modal-title">新增 ${escapeHtml(provider.shortName)} 账号</div>
           <div class="modal-desc">每个账号拥有独立隔离的登录态。备注可留空，登录成功后将自动显示邮箱名称。</div>
+          <label class="modal-field-label" for="modal-alias-input">账号备注</label>
           <input id="modal-alias-input" class="modal-input" maxlength="60" placeholder="备注名称（留空则自动获取登录邮箱）" value="${escapeHtml(modal.draft)}" />
+          ${supportsAccountProxy ? `
+            <label class="modal-field-label" for="modal-add-proxy-input">独立代理</label>
+            <input id="modal-add-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:18081" value="${escapeHtml(modal.proxyDraft)}" />
+            <div class="modal-desc">机场订阅先导入 Mihomo 等客户端，再填写固定到指定节点的本机 HTTP / SOCKS5 端口。这里不接收订阅链接或代理密码。</div>
+            <div class="modal-desc">新账号必须使用代理。可留空“仅保存”为待配置账号；配置并检查通过后才会打开网页。</div>
+          ` : ""}
+          ${modal.error ? `<div class="modal-error" role="alert">${escapeHtml(modal.error)}</div>` : ""}
           <div class="modal-footer">
             <button id="modal-cancel-btn" class="btn" type="button">取消</button>
-            <button id="modal-confirm-btn" class="btn primary" type="button">创建并打开</button>
+            ${supportsAccountProxy ? `<button id="modal-save-only-btn" class="btn" type="button">仅保存</button>` : ""}
+            <button id="modal-confirm-btn" class="btn primary" type="button">${supportsAccountProxy ? "检查并打开" : "创建并打开"}</button>
           </div>
         </div>
       </div>
@@ -614,9 +675,11 @@ function renderModal(provider: ProviderInfo): string {
       <div class="inline-modal" role="dialog" aria-modal="true">
         <div class="modal-card">
           <div class="modal-title">配置「${escapeHtml(modal.account.alias)}」的独立代理</div>
-          <div class="modal-desc">Windows 桌面版支持为此账号的 WebView 和登录弹窗绑定 HTTP 或 SOCKS5 代理。此处只保存代理地址，不支持在地址中填写用户名或密码。留空会清除独立代理绑定，网络行为回到系统默认设置。</div>
-          <input id="modal-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:8080 或 socks5://127.0.0.1:1080" value="${escapeHtml(modal.draft)}" />
-          <div class="modal-desc">保存后会重建该账号会话。当前不会检查代理出口 IP、DNS / WebRTC 泄漏或断线直连；配置代理不等于已验证网络隔离，也不提供设备指纹或账号关系隔离。</div>
+          <div class="modal-desc">Windows 桌面版支持 HTTP / SOCKS5 代理。机场订阅先导入 Mihomo 等客户端，再填写该账号固定使用的本机端口；这里不接收订阅链接或代理密码。</div>
+          <input id="modal-proxy-input" class="modal-input" maxlength="240" spellcheck="false" placeholder="http://127.0.0.1:18081 或 socks5://127.0.0.1:18081" value="${escapeHtml(modal.draft)}" />
+          <div class="modal-desc">${modal.account.proxyRequired || modal.account.proxyUrl ? "此账号必须使用代理。清空后会关闭其会话并阻止打开，直到重新配置代理。" : "旧账号当前使用系统默认网络。保存独立代理后将要求使用代理，之后清空会阻止打开。"}</div>
+          <div class="modal-desc">保存后会重建该账号会话并检查连通性。当前未验证出口 IP、DNS / WebRTC 或系统级拒绝直连；配置代理不等于已验证全面网络隔离。</div>
+          ${modal.error ? `<div class="modal-error" role="alert">${escapeHtml(modal.error)}</div>` : ""}
           <div class="modal-footer">
             <button id="modal-cancel-btn" class="btn" type="button">取消</button>
             <button id="modal-confirm-btn" class="btn primary" type="button">保存并应用</button>
@@ -746,6 +809,7 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
         const sharedProxyBadge = sharedProxyPeers.length
           ? `<span class="proxy-status shared" title="与账号 ${sharedProxyPeers.map((account) => escapeHtml(account.alias)).join("、")} 共用代理地址">共用代理 · ${sharedProxyPeers.length + 1} 号</span>`
           : "";
+        const networkPresentation = supportsAccountProxy ? accountNetworkPresentation(state, acc) : null;
 
         let compactSubHtml = "";
         if (switching && !hasDetail) {
@@ -814,9 +878,10 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                   ${shortcutHint}
                   ${alertBadgeHtml}
                   ${sharedProxyBadge}
-                  ${supportsAccountProxy ? `<span class="proxy-status ${acc.proxyUrl ? "configured" : "direct"}">${acc.proxyUrl ? "已配置 · 切号时检查" : "未配置独立代理"}</span>` : ""}
+                  ${networkPresentation ? `<span class="proxy-status ${networkPresentation.className}"${networkPresentation.message ? ` title="${escapeHtml(networkPresentation.message)}"` : ""}>${networkPresentation.label}</span>` : ""}
                 </div>
                 ${compactSubHtml}
+                ${networkPresentation?.message ? `<div class="account-network-notice ${networkPresentation.className}">${escapeHtml(networkPresentation.message)}</div>` : ""}
               </div>
               <div class="row-ops">
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
@@ -1001,7 +1066,7 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
   });
 
   const openAddModal = async () => {
-    await setModal({ kind: "add", providerId: provider.id, draft: "" });
+    await setModal({ kind: "add", providerId: provider.id, draft: "", proxyDraft: "", error: null });
   };
   document.querySelector("#add-account-btn")?.addEventListener("click", openAddModal);
   document.querySelector("#stage-add-btn")?.addEventListener("click", openAddModal);
@@ -1068,7 +1133,7 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
       const uuid = btn.dataset.proxyUuid;
       const acc = state.accounts.find((a) => a.providerId === provider.id && a.uuid === uuid);
       if (acc) {
-        await setModal({ kind: "proxy", account: acc, draft: acc.proxyUrl ?? "" });
+        await setModal({ kind: "proxy", account: acc, draft: acc.proxyUrl ?? "", error: null });
       }
     });
   });
@@ -1127,6 +1192,51 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
   proxyInput?.addEventListener("input", () => {
     if (modal.kind === "proxy") modal.draft = proxyInput.value;
   });
+
+  const addProxyInput = document.querySelector<HTMLInputElement>("#modal-add-proxy-input");
+  addProxyInput?.addEventListener("input", () => {
+    if (modal.kind === "add") modal.proxyDraft = addProxyInput.value;
+  });
+  addProxyInput?.addEventListener("keydown", async (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.click();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      await setModal({ kind: "none" });
+    }
+  });
+
+  const submitAdd = async (openAfterSave: boolean) => {
+    if (busy || modalSubmitting || modal.kind !== "add") return;
+    const currentModal = modal;
+    const proxyUrl = currentModal.proxyDraft.trim();
+    if (state.platform === "windows") {
+      currentModal.error = openAfterSave && !proxyUrl
+        ? "请先填写独立代理；也可以点击“仅保存”，稍后再配置。"
+        : validateProxyDraft(proxyUrl);
+      if (currentModal.error) {
+        render();
+        document.querySelector<HTMLInputElement>("#modal-add-proxy-input")?.focus();
+        return;
+      }
+    }
+    modalSubmitting = true;
+    try {
+      await setModal({ kind: "none" });
+      await callCommand("add_account", {
+        providerId: currentModal.providerId,
+        alias: currentModal.draft.trim(),
+        proxyUrl,
+        openAfterSave,
+      });
+    } finally {
+      modalSubmitting = false;
+    }
+  };
+  document.querySelector("#modal-save-only-btn")?.addEventListener("click", async () => {
+    await submitAdd(false);
+  });
   proxyInput?.addEventListener("keydown", async (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
@@ -1143,14 +1253,10 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
   });
 
   document.querySelector("#modal-confirm-btn")?.addEventListener("click", async () => {
+    if (busy || modalSubmitting) return;
     const currentModal = modal;
     if (currentModal.kind === "add") {
-      const alias = currentModal.draft.trim();
-      await setModal({ kind: "none" });
-      await callCommand("add_account", {
-        providerId: currentModal.providerId,
-        alias,
-      });
+      await submitAdd(true);
     } else if (currentModal.kind === "rename") {
       const alias = currentModal.draft.trim();
       if (!alias) return;
@@ -1161,8 +1267,13 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
         alias,
       });
     } else if (currentModal.kind === "proxy") {
-      if (busy) return;
       const proxyUrl = currentModal.draft.trim();
+      currentModal.error = validateProxyDraft(proxyUrl);
+      if (currentModal.error) {
+        render();
+        document.querySelector<HTMLInputElement>("#modal-proxy-input")?.focus();
+        return;
+      }
       await setModal({ kind: "none" });
       await callCommand("set_account_proxy", {
         providerId: currentModal.account.providerId,
