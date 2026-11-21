@@ -126,7 +126,7 @@ function accountNetworkPresentation(state: ManagerSnapshot, account: AccountReco
       label: account.pendingActivation
         ? "已配置 · 待打开"
         : running && networkState?.status === "ready"
-          ? "已打开 · 代理正常"
+          ? "已打开 · 预检通过"
           : "已配置 · 打开时检查",
       message: null,
     };

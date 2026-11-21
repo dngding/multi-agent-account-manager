@@ -1068,7 +1068,10 @@ impl SessionManager {
         .accounts
         .iter()
         .filter_map(|account| {
-          let key = AccountKey { provider_id: account.provider_id, uuid: account.uuid.clone() };
+          let key = AccountKey {
+            provider_id: account.provider_id,
+            uuid: account.uuid.clone(),
+          };
           locked.account_network_states.get(&key).cloned()
         })
         .collect(),
@@ -1397,7 +1400,8 @@ impl SessionManager {
     app: &AppHandle,
     raw_provider: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     #[cfg(desktop)]
     let warm_restore = {
       let locked = self.inner.lock().await;
@@ -1446,7 +1450,8 @@ impl SessionManager {
     raw_proxy_url: &str,
     open_after_save: bool,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     if !get_provider(provider_id).info.enabled {
       return Err(format!(
         "{} 当前待接入，暂不支持添加内嵌账号",
@@ -1478,7 +1483,11 @@ impl SessionManager {
       let uuid = loop {
         let candidate = Uuid::new_v4().hyphenated().to_string();
         let used_in_accounts = locked.store.accounts.iter().any(|a| a.uuid == candidate);
-        let used_in_cleanup = locked.store.pending_cleanup.iter().any(|k| k.uuid == candidate);
+        let used_in_cleanup = locked
+          .store
+          .pending_cleanup
+          .iter()
+          .any(|k| k.uuid == candidate);
         if !used_in_accounts && !used_in_cleanup {
           break candidate;
         }
@@ -1537,7 +1546,8 @@ impl SessionManager {
     raw_uuid: &str,
     raw_alias: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
     let alias = raw_alias.trim();
     if alias.is_empty() {
@@ -1556,7 +1566,10 @@ impl SessionManager {
     save_store_atomic(&locked.store_path, &locked.store)?;
 
     if let Some(slot) = &locked.active_slot {
-      if slot.committed && slot.account_key.provider_id == provider_id && slot.account_key.uuid == uuid {
+      if slot.committed
+        && slot.account_key.provider_id == provider_id
+        && slot.account_key.uuid == uuid
+      {
         let title = format!("{} · {}", get_provider(provider_id).info.short_name, alias);
         #[cfg(desktop)]
         if let Some(main_win) = app.get_window("main") {
@@ -1564,7 +1577,8 @@ impl SessionManager {
         }
         #[cfg(target_os = "android")]
         {
-          let _ = crate::platform::android::update_account_title(app, slot.switch_seq, &title).await;
+          let _ =
+            crate::platform::android::update_account_title(app, slot.switch_seq, &title).await;
         }
       }
     }
@@ -1580,7 +1594,8 @@ impl SessionManager {
     raw_uuid: &str,
     raw_proxy_url: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
     let proxy_url = crate::network::parse_account_proxy(raw_proxy_url)?;
     let key = AccountKey {
@@ -1655,9 +1670,12 @@ impl SessionManager {
     }
     let blocked = {
       let locked = self.inner.lock().await;
-      locked.store.accounts.iter().find(|account| {
-        account.provider_id == key.provider_id && account.uuid == key.uuid
-      }).is_some_and(|account| account.validated_proxy().is_err())
+      locked
+        .store
+        .accounts
+        .iter()
+        .find(|account| account.provider_id == key.provider_id && account.uuid == key.uuid)
+        .is_some_and(|account| account.validated_proxy().is_err())
     };
     if active_matches && !blocked {
       return self.switch_account(app, provider_id.as_str(), &uuid).await;
@@ -1682,7 +1700,8 @@ impl SessionManager {
     raw_provider: &str,
     raw_uuid: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
     let key = AccountKey {
       provider_id,
@@ -1773,7 +1792,8 @@ impl SessionManager {
     app: &AppHandle,
     raw_provider: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     let homepage = get_provider(provider_id).info.homepage_url;
 
     #[cfg(desktop)]
@@ -1829,7 +1849,8 @@ impl SessionManager {
     raw_provider: &str,
     raw_uuid: &str,
   ) -> Result<ManagerSnapshot, String> {
-    let provider_id = ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
     let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
     let key = AccountKey { provider_id, uuid };
     self.switch_account_internal(app, key, false).await
@@ -1859,7 +1880,9 @@ impl SessionManager {
         return Ok(Self::snapshot_from_locked(&locked));
       }
     };
-    self.switch_account(app, provider_id.as_str(), &target_uuid).await
+    self
+      .switch_account(app, provider_id.as_str(), &target_uuid)
+      .await
   }
 
   pub async fn trigger_silent_sync(self: &Arc<Self>, app: &AppHandle, force: bool) {
@@ -1893,13 +1916,15 @@ impl SessionManager {
 
       for (key, wv_label, vid) in warm_targets {
         if let Some(wv) = app.get_webview(&wv_label) {
-          let _ = wv.eval(r#"(() => {
+          let _ = wv.eval(
+            r#"(() => {
             try {
               if (typeof window.__maamRefreshBackendQuota === 'function') {
                 window.__maamRefreshBackendQuota(true);
               }
             } catch (_) {}
-          })()"#);
+          })()"#,
+          );
 
           let mgr = Arc::clone(self);
           let app_handle = app.clone();
@@ -1976,7 +2001,10 @@ impl SessionManager {
         return Err("存在 UUID 归属冲突，已停留在管理页".to_string());
       }
       if !get_provider(key.provider_id).info.enabled {
-        return Err(format!("{} 尚未开放应用内嵌", get_provider(key.provider_id).info.name));
+        return Err(format!(
+          "{} 尚未开放应用内嵌",
+          get_provider(key.provider_id).info.name
+        ));
       }
       if locked.store.pending_cleanup.contains(&key) {
         return Err("该账号正在清理本地资料，请稍后重试或重新创建".to_string());
@@ -2037,16 +2065,20 @@ impl SessionManager {
     };
     {
       let mut locked = self.inner.lock().await;
-      let current_account = locked.store.accounts.iter().find(|account| {
-        account.provider_id == key.provider_id && account.uuid == key.uuid
-      });
+      let current_account = locked
+        .store
+        .accounts
+        .iter()
+        .find(|account| account.provider_id == key.provider_id && account.uuid == key.uuid);
       let configuration_matches = current_account.is_some_and(|account| {
         account.proxy_url == checked_account.proxy_url
           && account.proxy_required == checked_account.proxy_required
           && account.pending_activation == checked_account.pending_activation
       });
       if self.switch_request_seq.load(Ordering::SeqCst) != request_seq || !configuration_matches {
-        if locked.account_network_states.get(&key)
+        if locked
+          .account_network_states
+          .get(&key)
           .is_some_and(|state| state.check_request == Some(request_seq))
         {
           locked.account_network_states.remove(&key);
@@ -2057,39 +2089,35 @@ impl SessionManager {
         return Ok(snapshot);
       }
     }
-      if let Err(error) = check_result {
-        let notice = format!("代理连通性检查失败，已阻止打开该账号：{error}");
-        let snapshot = {
-          let mut locked = self.inner.lock().await;
-          if self.switch_request_seq.load(Ordering::SeqCst) != request_seq {
-            return Ok(Self::snapshot_from_locked(&locked));
-          }
-          if locked
-            .store
-            .accounts
-            .iter()
-            .any(|account| {
-              account.provider_id == key.provider_id
-                && account.uuid == key.uuid
-                && account.proxy_url == checked_account.proxy_url
-                && account.proxy_required == checked_account.proxy_required
-            })
-          {
-            locked.notice = Some(notice.clone());
-            let status = if checked_account.proxy_url.is_none() {
-              AccountNetworkStatus::Pending
-            } else {
-              AccountNetworkStatus::Interrupted
-            };
-            locked.account_network_states.insert(key.clone(), AccountNetworkState::new(
-              &key, status, Some(error.clone()),
-            ));
-          }
-          Self::snapshot_from_locked(&locked)
-        };
-        self.emit_snapshot(app, &snapshot);
-        return Err(notice);
-      }
+    if let Err(error) = check_result {
+      let notice = format!("代理连通性检查失败，已阻止打开该账号：{error}");
+      let snapshot = {
+        let mut locked = self.inner.lock().await;
+        if self.switch_request_seq.load(Ordering::SeqCst) != request_seq {
+          return Ok(Self::snapshot_from_locked(&locked));
+        }
+        if locked.store.accounts.iter().any(|account| {
+          account.provider_id == key.provider_id
+            && account.uuid == key.uuid
+            && account.proxy_url == checked_account.proxy_url
+            && account.proxy_required == checked_account.proxy_required
+        }) {
+          locked.notice = Some(notice.clone());
+          let status = if checked_account.proxy_url.is_none() {
+            AccountNetworkStatus::Pending
+          } else {
+            AccountNetworkStatus::Interrupted
+          };
+          locked.account_network_states.insert(
+            key.clone(),
+            AccountNetworkState::new(&key, status, Some(error.clone())),
+          );
+        }
+        Self::snapshot_from_locked(&locked)
+      };
+      self.emit_snapshot(app, &snapshot);
+      return Err(notice);
+    }
 
     #[cfg(desktop)]
     {
@@ -2118,7 +2146,10 @@ impl SessionManager {
           return Err("存在 UUID 归属冲突，已停留在管理页".to_string());
         }
         if !get_provider(key.provider_id).info.enabled {
-          return Err(format!("{} 尚未开放应用内嵌", get_provider(key.provider_id).info.name));
+          return Err(format!(
+            "{} 尚未开放应用内嵌",
+            get_provider(key.provider_id).info.name
+          ));
         }
         if locked.store.pending_cleanup.contains(&key) {
           self.hide_foreground_slot(app, next_seq, &mut locked).await;
@@ -2145,9 +2176,14 @@ impl SessionManager {
           }
 
           if acc.pending_activation {
-            let index = locked.store.accounts.iter().position(|account| {
-              account.provider_id == key.provider_id && account.uuid == key.uuid
-            }).ok_or_else(|| "账号已被移除".to_string())?;
+            let index = locked
+              .store
+              .accounts
+              .iter()
+              .position(|account| {
+                account.provider_id == key.provider_id && account.uuid == key.uuid
+              })
+              .ok_or_else(|| "账号已被移除".to_string())?;
             locked.store.accounts[index].pending_activation = false;
             if let Err(error) = save_store_atomic(&locked.store_path, &locked.store) {
               locked.store.accounts[index].pending_activation = true;
@@ -2156,9 +2192,10 @@ impl SessionManager {
             }
           }
           if acc.proxy_url.is_some() {
-            locked.account_network_states.insert(key.clone(), AccountNetworkState::new(
-              &key, AccountNetworkStatus::Ready, None,
-            ));
+            locked.account_network_states.insert(
+              key.clone(),
+              AccountNetworkState::new(&key, AccountNetworkStatus::Ready, None),
+            );
           }
 
           locked.selected_provider_id = key.provider_id;
@@ -2168,7 +2205,11 @@ impl SessionManager {
 
           let warm_state = locked.warm_pool.get(&key).and_then(|entry| {
             if app.get_webview(&entry.webview_label).is_some() {
-              Some((entry.view_instance_id, entry.paint_ready, entry.watcher_running))
+              Some((
+                entry.view_instance_id,
+                entry.paint_ready,
+                entry.watcher_running,
+              ))
             } else {
               None
             }
@@ -2235,7 +2276,10 @@ impl SessionManager {
             let vid = self.view_counter.fetch_add(1, Ordering::SeqCst);
             let dir = locked.app_data_dir.clone();
             DesktopSwitchPlan::CreateCold {
-              account: AccountRecord { pending_activation: false, ..acc },
+              account: AccountRecord {
+                pending_activation: false,
+                ..acc
+              },
               app_data_dir: dir,
               view_instance_id: vid,
             }
@@ -2286,7 +2330,10 @@ impl SessionManager {
           return Err("存在 UUID 归属冲突，已停留在管理页".to_string());
         }
         if !get_provider(key.provider_id).info.enabled {
-          return Err(format!("{} 尚未开放应用内嵌", get_provider(key.provider_id).info.name));
+          return Err(format!(
+            "{} 尚未开放应用内嵌",
+            get_provider(key.provider_id).info.name
+          ));
         }
         if locked.store.pending_cleanup.contains(&key) {
           self.hide_foreground_slot(app, next_seq, &mut locked).await;
@@ -2311,7 +2358,13 @@ impl SessionManager {
       };
 
       self
-        .open_android_session(app, account_record, next_seq, view_instance_id, is_cold_start)
+        .open_android_session(
+          app,
+          account_record,
+          next_seq,
+          view_instance_id,
+          is_cold_start,
+        )
         .await
     }
   }
@@ -2583,7 +2636,8 @@ impl SessionManager {
       let mut locked = self.inner.lock().await;
       locked.active_slot = None;
       self.active_view_id.store(0, Ordering::SeqCst);
-      locked.notice = Some("该账号已绑定代理，但每账号独立代理目前仅支持 Windows 桌面版，已阻止打开".to_string());
+      locked.notice =
+        Some("该账号已绑定代理，但每账号独立代理目前仅支持 Windows 桌面版，已阻止打开".to_string());
       return Ok(Self::snapshot_from_locked(&locked));
     }
     let profile_dir = app_data_dir.join("profiles").join(&account.uuid);
@@ -2591,7 +2645,8 @@ impl SessionManager {
     #[cfg(windows)]
     if is_cold_start && !profile_dir.exists() {
       let mut locked = self.inner.lock().await;
-      locked.notice = Some("上次已提交账号的 Windows WebView2 资料目录缺失，已停留在管理页".to_string());
+      locked.notice =
+        Some("上次已提交账号的 Windows WebView2 资料目录缺失，已停留在管理页".to_string());
       return Ok(Self::snapshot_from_locked(&locked));
     }
     #[cfg(not(windows))]
@@ -2618,7 +2673,8 @@ impl SessionManager {
         return Ok(Self::snapshot_from_locked(&locked));
       }
       let configuration_matches = locked.store.accounts.iter().any(|stored| {
-        stored.provider_id == key.provider_id && stored.uuid == key.uuid
+        stored.provider_id == key.provider_id
+          && stored.uuid == key.uuid
           && stored.proxy_url == account.proxy_url
           && stored.proxy_required == account.proxy_required
           && !stored.pending_activation
@@ -2632,7 +2688,9 @@ impl SessionManager {
         switch_seq: expected_seq,
         committed: false,
       });
-      self.active_view_id.store(view_instance_id, Ordering::SeqCst);
+      self
+        .active_view_id
+        .store(view_instance_id, Ordering::SeqCst);
       locked.warm_pool.insert(
         key.clone(),
         WarmDesktopEntry {
@@ -2755,7 +2813,8 @@ impl SessionManager {
     view_instance_id: u64,
     loaded_url: Url,
   ) {
-    if classify_top_level_url(key.provider_id, &loaded_url, false) != NavigationDecision::AllowHttps {
+    if classify_top_level_url(key.provider_id, &loaded_url, false) != NavigationDecision::AllowHttps
+    {
       return;
     }
 
@@ -2988,9 +3047,11 @@ impl SessionManager {
         .accounts
         .iter()
         .find(|stored| stored.provider_id == key.provider_id && stored.uuid == key.uuid)
-        .is_some_and(|stored| stored.proxy_url == account.proxy_url
-          && stored.proxy_required == account.proxy_required
-          && !stored.pending_activation);
+        .is_some_and(|stored| {
+          stored.proxy_url == account.proxy_url
+            && stored.proxy_required == account.proxy_required
+            && !stored.pending_activation
+        });
       if !configuration_matches
         || !locked.conflicts.is_empty()
         || locked.store.pending_cleanup.contains(&key)
@@ -3029,7 +3090,9 @@ impl SessionManager {
     );
 
     let sync_res = (|| {
-      let main_win = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+      let main_win = app
+        .get_window("main")
+        .ok_or_else(|| "主窗口不存在".to_string())?;
       let (init_pos, init_size) = Self::initial_hidden_child_rect(&main_win);
       let created_wv = main_win
         .add_child(builder, init_pos, init_size)
@@ -3082,12 +3145,15 @@ impl SessionManager {
     if account.proxy_url.is_some() {
       let snapshot = {
         let mut locked = self.inner.lock().await;
-        if locked.warm_pool.get(&key)
+        if locked
+          .warm_pool
+          .get(&key)
           .is_some_and(|entry| entry.view_instance_id == view_instance_id)
         {
-          locked.account_network_states.insert(key.clone(), AccountNetworkState::new(
-            &key, AccountNetworkStatus::Ready, None,
-          ));
+          locked.account_network_states.insert(
+            key.clone(),
+            AccountNetworkState::new(&key, AccountNetworkStatus::Ready, None),
+          );
         }
         Self::snapshot_from_locked(&locked)
       };
@@ -3147,9 +3213,14 @@ impl SessionManager {
             }) {
               locked.prewarm_failed.insert(failed_key.clone());
               if checked_account.proxy_url.is_some() {
-                locked.account_network_states.insert(failed_key.clone(), AccountNetworkState::new(
-                  &failed_key, AccountNetworkStatus::Interrupted, Some(error),
-                ));
+                locked.account_network_states.insert(
+                  failed_key.clone(),
+                  AccountNetworkState::new(
+                    &failed_key,
+                    AccountNetworkStatus::Interrupted,
+                    Some(error),
+                  ),
+                );
               }
             }
             Self::snapshot_from_locked(&locked)
@@ -3221,9 +3292,8 @@ impl SessionManager {
     {
       let mut locked = self.inner.lock().await;
       locked.active_slot = None;
-      locked.notice = Some(
-        "该账号已绑定代理，但 Android 尚不支持 per-account proxy，已阻止打开".to_string(),
-      );
+      locked.notice =
+        Some("该账号已绑定代理，但 Android 尚不支持 per-account proxy，已阻止打开".to_string());
       return Ok(Self::snapshot_from_locked(&locked));
     }
 
@@ -3277,7 +3347,11 @@ impl SessionManager {
       alias: account.alias.clone(),
       auto_alias: account.auto_alias,
       entry_url: spec.info.entry_url.to_string(),
-      allowed_hosts: spec.allowed_hosts.iter().map(|s| (*s).to_string()).collect(),
+      allowed_hosts: spec
+        .allowed_hosts
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect(),
       switch_seq: expected_seq,
       view_instance_id,
       is_cold_start,
@@ -3361,7 +3435,11 @@ impl SessionManager {
               uuid: norm_uuid,
             },
             view_instance_id,
-            if identity.is_empty() { None } else { Some(identity) },
+            if identity.is_empty() {
+              None
+            } else {
+              Some(identity)
+            },
             avatar_url,
             quota_text,
             quota_percent,
@@ -3434,7 +3512,9 @@ impl SessionManager {
         };
         self.emit_snapshot(app, &snap);
       }
-      AndroidSessionEvent::RecreateRequested { previous_switch_seq } => {
+      AndroidSessionEvent::RecreateRequested {
+        previous_switch_seq,
+      } => {
         let fallback = {
           let mut locked = self.inner.lock().await;
           if self.current_seq.load(Ordering::SeqCst) == previous_switch_seq {
@@ -3506,7 +3586,9 @@ impl SessionManager {
     if self.current_seq.load(Ordering::SeqCst) != expected_seq {
       return;
     }
-    if classify_top_level_url(key.provider_id, &committed_url, false) != NavigationDecision::AllowHttps {
+    if classify_top_level_url(key.provider_id, &committed_url, false)
+      != NavigationDecision::AllowHttps
+    {
       return;
     }
 
@@ -3528,7 +3610,9 @@ impl SessionManager {
         .find(|a| a.provider_id == key.provider_id && a.uuid == key.uuid)
         .cloned()
       else {
-        self.hide_foreground_slot(app, expected_seq, &mut locked).await;
+        self
+          .hide_foreground_slot(app, expected_seq, &mut locked)
+          .await;
         return;
       };
 
@@ -3549,7 +3633,9 @@ impl SessionManager {
       locked.store.last_committed = Some(key.clone());
       if let Err(err) = save_store_atomic(&locked.store_path, &locked.store) {
         locked.store.last_committed = prev_last;
-        self.hide_foreground_slot(app, expected_seq, &mut locked).await;
+        self
+          .hide_foreground_slot(app, expected_seq, &mut locked)
+          .await;
         locked.notice = Some(format!("提交账号记录写盘失败，已回退管理页: {err}"));
         Some(Self::snapshot_from_locked(&locked))
       } else {
@@ -3619,19 +3705,23 @@ impl SessionManager {
     view_instance_id: u64,
     error: String,
   ) -> Option<(WarmDesktopEntry, bool)> {
-    if !locked.warm_pool.get(key)
+    if !locked
+      .warm_pool
+      .get(key)
       .is_some_and(|entry| entry.view_instance_id == view_instance_id)
     {
       return None;
     }
     let entry = locked.warm_pool.remove(key)?;
     locked.prewarm_failed.insert(key.clone());
-    locked.account_network_states.insert(key.clone(), AccountNetworkState::new(
-      key, AccountNetworkStatus::Interrupted, Some(error.clone()),
-    ));
-    let is_foreground = locked.active_slot.as_ref().is_some_and(|slot| {
-      slot.account_key == *key && slot.view_instance_id == view_instance_id
-    });
+    locked.account_network_states.insert(
+      key.clone(),
+      AccountNetworkState::new(key, AccountNetworkStatus::Interrupted, Some(error.clone())),
+    );
+    let is_foreground = locked
+      .active_slot
+      .as_ref()
+      .is_some_and(|slot| slot.account_key == *key && slot.view_instance_id == view_instance_id);
     if is_foreground {
       locked.active_slot = None;
       locked.notice = Some(format!(
@@ -3697,15 +3787,13 @@ impl SessionManager {
               .store
               .accounts
               .iter()
-              .find(|account| {
-                account.provider_id == key.provider_id && account.uuid == key.uuid
-              })
+              .find(|account| account.provider_id == key.provider_id && account.uuid == key.uuid)
               .cloned()
           };
 
-          if let Some(account) = checked_account.filter(|account| {
-            account.proxy_required || account.proxy_url.is_some()
-          }) {
+          if let Some(account) =
+            checked_account.filter(|account| account.proxy_required || account.proxy_url.is_some())
+          {
             let route_result = match account.validated_proxy() {
               Ok(Some(proxy_url)) => {
                 let target_url = get_provider(key.provider_id).info.entry_url.parse::<Url>();
@@ -3722,14 +3810,19 @@ impl SessionManager {
               consecutive_proxy_failures = 0;
               let snap = {
                 let mut locked = mgr.inner.lock().await;
-                let same_view = locked.warm_pool.get(&key)
+                let same_view = locked
+                  .warm_pool
+                  .get(&key)
                   .is_some_and(|entry| entry.view_instance_id == view_instance_id);
-                let needs_update = locked.account_network_states.get(&key)
+                let needs_update = locked
+                  .account_network_states
+                  .get(&key)
                   .is_none_or(|state| state.status == AccountNetworkStatus::Interrupted);
                 if same_view && needs_update {
-                  locked.account_network_states.insert(key.clone(), AccountNetworkState::new(
-                    &key, AccountNetworkStatus::Ready, None,
-                  ));
+                  locked.account_network_states.insert(
+                    key.clone(),
+                    AccountNetworkState::new(&key, AccountNetworkStatus::Ready, None),
+                  );
                   Some(Self::snapshot_from_locked(&locked))
                 } else {
                   None
@@ -3747,15 +3840,16 @@ impl SessionManager {
                 let snap_opt = {
                   let mut locked = mgr.inner.lock().await;
                   let same_config = locked.store.accounts.iter().any(|stored| {
-                    stored.provider_id == key.provider_id && stored.uuid == key.uuid
+                    stored.provider_id == key.provider_id
+                      && stored.uuid == key.uuid
                       && stored.proxy_url == account.proxy_url
                       && stored.proxy_required == account.proxy_required
                   });
                   if !same_config {
                     None
-                  } else if let Some((entry, is_foreground)) = Self::interrupt_desktop_view(
-                    &mut locked, &key, view_instance_id, error,
-                  ) {
+                  } else if let Some((entry, is_foreground)) =
+                    Self::interrupt_desktop_view(&mut locked, &key, view_instance_id, error)
+                  {
                     Self::close_warm_entry(&app, entry);
                     if is_foreground {
                       mgr.active_view_id.store(0, Ordering::SeqCst);
@@ -4216,10 +4310,19 @@ mod network_state_tests {
       }),
       last_active_per_provider: HashMap::new(),
       account_network_states: HashMap::from([
-        (a.clone(), AccountNetworkState::new(&a, AccountNetworkStatus::Ready, None)),
-        (b.clone(), AccountNetworkState::new(&b, AccountNetworkStatus::Ready, None)),
+        (
+          a.clone(),
+          AccountNetworkState::new(&a, AccountNetworkStatus::Ready, None),
+        ),
+        (
+          b.clone(),
+          AccountNetworkState::new(&b, AccountNetworkStatus::Ready, None),
+        ),
       ]),
-      warm_pool: HashMap::from([(a.clone(), warm_entry(&a, 1)), (b.clone(), warm_entry(&b, 2))]),
+      warm_pool: HashMap::from([
+        (a.clone(), warm_entry(&a, 1)),
+        (b.clone(), warm_entry(&b, 2)),
+      ]),
       prewarm_failed: HashSet::new(),
       pending_external_auth: None,
       notice: Some("existing B notice".to_string()),
@@ -4232,7 +4335,8 @@ mod network_state_tests {
   fn background_proxy_failure_preserves_foreground_and_its_notice() {
     let (mut state, a, b) = fixture();
     let (removed, was_foreground) =
-      SessionManager::interrupt_desktop_view(&mut state, &a, 1, "test A outage".to_string()).unwrap();
+      SessionManager::interrupt_desktop_view(&mut state, &a, 1, "test A outage".to_string())
+        .unwrap();
 
     assert_eq!(removed.account_key, a);
     assert!(!was_foreground);
@@ -4245,8 +4349,14 @@ mod network_state_tests {
       state.account_network_states[&a].status,
       AccountNetworkStatus::Interrupted
     );
-    assert_eq!(state.account_network_states[&a].message.as_deref(), Some("test A outage"));
-    assert_eq!(state.account_network_states[&b].status, AccountNetworkStatus::Ready);
+    assert_eq!(
+      state.account_network_states[&a].message.as_deref(),
+      Some("test A outage")
+    );
+    assert_eq!(
+      state.account_network_states[&b].status,
+      AccountNetworkStatus::Ready
+    );
     assert!(state.prewarm_failed.contains(&a));
     assert!(!state.prewarm_failed.contains(&b));
   }
@@ -4261,7 +4371,8 @@ mod network_state_tests {
       committed: true,
     });
     let (_, was_foreground) =
-      SessionManager::interrupt_desktop_view(&mut state, &a, 1, "test A outage".to_string()).unwrap();
+      SessionManager::interrupt_desktop_view(&mut state, &a, 1, "test A outage".to_string())
+        .unwrap();
 
     assert!(was_foreground);
     let snapshot = SessionManager::snapshot_from_locked(&state);
@@ -4269,7 +4380,11 @@ mod network_state_tests {
     assert!(snapshot.switching_account.is_none());
     assert!(!snapshot.warm_accounts.contains(&a));
     assert!(snapshot.warm_accounts.contains(&b));
-    assert!(snapshot.notice.as_deref().unwrap().contains("test A outage"));
+    assert!(snapshot
+      .notice
+      .as_deref()
+      .unwrap()
+      .contains("test A outage"));
     assert_eq!(
       state.account_network_states[&a].status,
       AccountNetworkStatus::Interrupted
@@ -4296,7 +4411,10 @@ mod network_state_tests {
     assert!(snapshot.warm_accounts.contains(&a));
     assert!(snapshot.warm_accounts.contains(&b));
     assert_eq!(snapshot.notice.as_deref(), Some("existing B notice"));
-    assert_eq!(state.account_network_states[&a].status, AccountNetworkStatus::Ready);
+    assert_eq!(
+      state.account_network_states[&a].status,
+      AccountNetworkStatus::Ready
+    );
     assert!(state.account_network_states[&a].message.is_none());
     assert!(!state.prewarm_failed.contains(&a));
   }

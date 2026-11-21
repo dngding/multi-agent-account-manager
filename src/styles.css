@@ -614,12 +614,14 @@ body,
 
 .account-alias-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   min-width: 0;
 }
 
 .account-alias {
+  max-width: 100%;
   font-size: 13px;
   font-weight: 620;
   color: var(--text-main);
@@ -887,6 +889,7 @@ body,
 
 .row-ops {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 2px;
   opacity: 0;
@@ -900,6 +903,7 @@ body,
 
 .proxy-status {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   border-radius: 999px;
   padding: 2px 6px;
@@ -1037,11 +1041,13 @@ body,
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
   z-index: 30;
   animation: maam-fade-in 0.14s ease-out;
 }
 
 .modal-card {
+  flex-shrink: 0;
   background: #ffffff;
   border: 1px solid var(--border);
   border-radius: 14px;

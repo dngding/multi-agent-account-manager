@@ -293,7 +293,10 @@ mod tests {
     ] {
       let mut entry = account(TEST_UUID, proxy);
       entry.proxy_required = true;
-      assert!(entry.validated_proxy().is_err(), "unexpectedly allowed {proxy:?}");
+      assert!(
+        entry.validated_proxy().is_err(),
+        "unexpectedly allowed {proxy:?}"
+      );
     }
   }
 
@@ -305,7 +308,9 @@ mod tests {
       assert!(entry.validated_proxy().unwrap().is_some());
     }
     assert_eq!(account(TEST_UUID, None).validated_proxy().unwrap(), None);
-    assert!(account(TEST_UUID, Some("not-a-proxy")).validated_proxy().is_err());
+    assert!(account(TEST_UUID, Some("not-a-proxy"))
+      .validated_proxy()
+      .is_err());
   }
 }
 
@@ -465,14 +470,18 @@ fn migrate_from_value(root: Value) -> Result<(AccountsStoreFile, bool), String> 
         .get("proxyRequired")
         .or_else(|| item_obj.get("proxy_required"))
       {
-        Some(value) => value.as_bool().ok_or_else(|| "proxyRequired 必须是布尔值".to_string())?,
+        Some(value) => value
+          .as_bool()
+          .ok_or_else(|| "proxyRequired 必须是布尔值".to_string())?,
         None => false,
       };
       let pending_activation = match item_obj
         .get("pendingActivation")
         .or_else(|| item_obj.get("pending_activation"))
       {
-        Some(value) => value.as_bool().ok_or_else(|| "pendingActivation 必须是布尔值".to_string())?,
+        Some(value) => value
+          .as_bool()
+          .ok_or_else(|| "pendingActivation 必须是布尔值".to_string())?,
         None => false,
       };
 

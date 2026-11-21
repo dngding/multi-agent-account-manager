@@ -14,7 +14,7 @@
 | **Hark** | 已启用 | 独立会话隔离、额度与余额同步 |
 
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
-- **Windows 按账号代理（开发中）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。两个未登录 profile 已完成本地 HTTP 代理断线、阻止重开、恢复和重启实测，见[验收记录](docs/windows-proxy-acceptance-results-2026-11-21.md)。公网出口、DNS / WebRTC 和系统级断线拒绝直连仍待验证，此能力不代表设备或账号关系隔离。
+- **Windows 按账号代理（开发中）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。当前源码新增“仅保存 / 检查并打开”流程：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。本轮改动的 Windows Rust CI 和实机验收尚待完成。提交 `86679ef` 的两个未登录 profile 已通过本地 HTTP 代理断线、阻止重开、恢复和重启实测，见[历史验收记录](docs/windows-proxy-acceptance-results-2026-11-21.md)。界面中的代理正常状态仅表示有限握手检查，不代表公网出口、DNS / WebRTC 或系统级断线拒绝直连已验证，也不代表设备或账号关系隔离。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
 - **应用内检查更新**：支持在客户端内检查 GitHub Releases 最新版本、带进度条下载、`SHA-256` 校验及覆盖更新。
 
@@ -49,7 +49,19 @@
 
 ## 下载与安装
 
-前往 [GitHub Releases](https://github.com/ldjx7/multi-agent-account-manager/releases) 下载对应平台安装包：
+### 本分支 Windows 验收构建
+
+Windows 按账号代理增强在用户 fork 的 `codex/windows-account-proxy` 功能分支开发。进入 [dngding 仓库的 Windows CI](https://github.com/dngding/multi-agent-account-manager/actions/workflows/windows-ci.yml?query=branch%3Acodex%2Fwindows-account-proxy)，选择该分支中**源码提交匹配、构建成功**的运行，在页面底部下载 `windows-x64-nsis-acceptance` artifact。它包含独立 EXE 和 NSIS 安装器；下载 artifact 通常需要登录 GitHub。
+
+先按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)使用独立 EXE 和全新测试数据目录验证，再决定是否安装。不要用旧提交的成功构建代替本轮改动的 CI 或实机验收。
+
+机场订阅接入和固定账号端口配置见[机场订阅 → Mihomo 配置指引](docs/airport-subscription-proxy-setup.md)。订阅链接先由代理客户端解析，叠号只接收固定 HTTP / SOCKS5 代理端口。
+
+当前应用内更新仍指向上游发布源。测试本分支时不要通过应用内更新覆盖程序；本分支构建应从上述 fork 的对应 CI 运行获取。
+
+### 上游正式发布
+
+[上游 GitHub Releases](https://github.com/ldjx7/multi-agent-account-manager/releases) 提供原项目的平台安装包，**不包含本功能分支新增的 Windows 代理增强**：
 
 | 平台 | 下载文件 | 架构 / 系统要求 |
 | --- | --- | --- |
@@ -121,7 +133,7 @@
 
 ## 本地开发
 
-Windows 多账号隔离增强的设计范围、当前实现状态及后续网络 fail-closed 验收见[开发指引](docs/muse-multi-account-isolation-development-guide.md)。
+Windows 多账号隔离增强的设计范围、当前实现状态及后续网络 fail-closed 验收见[开发指引](docs/muse-multi-account-isolation-development-guide.md)。机场订阅的本地转接方式见[机场代理配置指引](docs/airport-subscription-proxy-setup.md)。
 
 环境要求：Node.js 22+、Rust 1.85+，Android 构建需额外配置 Android SDK 与 NDK 26+。
 

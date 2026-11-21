@@ -88,8 +88,8 @@ fn check_proxy_route_sync(
       break;
     }
   }
-  let mut stream = stream
-    .ok_or_else(|| "代理服务器当前无法连接，请检查地址、端口和网络".to_string())?;
+  let mut stream =
+    stream.ok_or_else(|| "代理服务器当前无法连接，请检查地址、端口和网络".to_string())?;
   let handshake_deadline = Instant::now() + Duration::from_secs(8);
 
   match proxy_url.scheme() {
@@ -167,9 +167,12 @@ fn check_http_proxy_tunnel(
   if !header.ends_with(b"\r\n\r\n") {
     return Err("HTTP 代理返回的响应头过大".to_string());
   }
-  let response =
-    std::str::from_utf8(&header).map_err(|_| "HTTP 代理返回了无效响应".to_string())?;
-  let mut status_parts = response.lines().next().unwrap_or_default().split_whitespace();
+  let response = std::str::from_utf8(&header).map_err(|_| "HTTP 代理返回了无效响应".to_string())?;
+  let mut status_parts = response
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .split_whitespace();
   let version = status_parts.next();
   let status_code = status_parts.next();
   if matches!(version, Some("HTTP/1.0" | "HTTP/1.1")) && status_code == Some("200") {
@@ -193,19 +196,14 @@ fn check_socks5_proxy_tunnel(
     .write_all(&[0x05, 0x01, 0x00])
     .map_err(|_| "无法向 SOCKS5 代理发送握手请求".to_string())?;
   let mut method = [0u8; 2];
-  read_exact_before_deadline(
-    stream,
-    &mut method,
-    deadline,
-    "SOCKS5 代理未能完成握手",
-  )?;
+  read_exact_before_deadline(stream, &mut method, deadline, "SOCKS5 代理未能完成握手")?;
   if method[0] != 0x05 || method[1] != 0x00 {
     return Err("SOCKS5 代理要求身份验证；当前版本不支持带认证的代理".to_string());
   }
 
   let target_host = target_host.as_bytes();
-  let host_len = u8::try_from(target_host.len())
-    .map_err(|_| "目标站点域名过长，无法检查代理".to_string())?;
+  let host_len =
+    u8::try_from(target_host.len()).map_err(|_| "目标站点域名过长，无法检查代理".to_string())?;
   let mut request = Vec::with_capacity(target_host.len() + 7);
   request.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, host_len]);
   request.extend_from_slice(target_host);
@@ -234,12 +232,7 @@ fn check_socks5_proxy_tunnel(
     0x04 => 16,
     0x03 => {
       let mut length = [0u8; 1];
-      read_exact_before_deadline(
-        stream,
-        &mut length,
-        deadline,
-        "SOCKS5 代理返回了无效响应",
-      )?;
+      read_exact_before_deadline(stream, &mut length, deadline, "SOCKS5 代理返回了无效响应")?;
       length[0] as usize
     }
     _ => return Err("SOCKS5 代理返回了无效响应".to_string()),
@@ -263,11 +256,17 @@ mod tests {
   #[test]
   fn accepts_http_and_socks5_endpoints() {
     assert_eq!(
-      parse_account_proxy("http://127.0.0.1:8080").unwrap().unwrap().as_str(),
+      parse_account_proxy("http://127.0.0.1:8080")
+        .unwrap()
+        .unwrap()
+        .as_str(),
       "http://127.0.0.1:8080/"
     );
     assert_eq!(
-      parse_account_proxy("socks5://proxy.example:1080").unwrap().unwrap().as_str(),
+      parse_account_proxy("socks5://proxy.example:1080")
+        .unwrap()
+        .unwrap()
+        .as_str(),
       "socks5://proxy.example:1080/"
     );
   }
@@ -311,7 +310,9 @@ mod tests {
       let address = listener.local_addr().unwrap();
       let proxy = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        stream
+          .set_read_timeout(Some(Duration::from_secs(2)))
+          .unwrap();
         let mut request = Vec::new();
         let mut byte = [0u8; 1];
         while !request.ends_with(b"\r\n\r\n") {
@@ -345,7 +346,9 @@ mod tests {
     let address = listener.local_addr().unwrap();
     let proxy = thread::spawn(move || {
       let (mut stream, _) = listener.accept().unwrap();
-      stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+      stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .unwrap();
       let mut greeting = [0u8; 3];
       stream.read_exact(&mut greeting).unwrap();
       stream.write_all(&[0x05, 0xff]).unwrap();
@@ -358,9 +361,7 @@ mod tests {
       Instant::now() + Duration::from_secs(2),
     )
     .is_err());
-    assert!(
-      check_socks5_proxy_tunnel(&mut stream, "muse.ai", 443, Instant::now()).is_err()
-    );
+    assert!(check_socks5_proxy_tunnel(&mut stream, "muse.ai", 443, Instant::now()).is_err());
     proxy.join().unwrap();
   }
 
@@ -385,7 +386,9 @@ mod tests {
       assert!(String::from_utf8(request)
         .unwrap()
         .starts_with("CONNECT muse.ai:443 "));
-      stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n").unwrap();
+      stream
+        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        .unwrap();
     });
 
     let proxy_url = Url::parse(&format!("http://{address}")).unwrap();
@@ -448,7 +451,9 @@ mod tests {
       stream.read_exact(&mut target).unwrap();
       assert_eq!(&target[..7], b"muse.ai");
       assert_eq!(&target[7..], &[0x01, 0xbb]);
-      stream.write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0]).unwrap();
+      stream
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 0])
+        .unwrap();
     });
 
     let proxy_url = Url::parse(&format!("socks5://{address}")).unwrap();
