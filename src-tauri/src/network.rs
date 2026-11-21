@@ -251,6 +251,8 @@ fn check_socks5_proxy_tunnel(
 #[cfg(test)]
 mod tests {
   use super::parse_account_proxy;
+  #[cfg(windows)]
+  use url::Url;
 
   #[test]
   fn accepts_http_and_socks5_endpoints() {
@@ -279,6 +281,81 @@ mod tests {
   fn rejects_credentials_and_proxy_paths() {
     assert!(parse_account_proxy("http://user:secret@proxy.example:8080").is_err());
     assert!(parse_account_proxy("http://proxy.example:8080/path").is_err());
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn rejects_failed_incomplete_and_oversized_http_tunnels() {
+    use super::check_http_proxy_tunnel;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let mut oversized_response = b"HTTP/1.1 200 OK\r\nX-Padding: ".to_vec();
+    oversized_response.extend(vec![b'x'; 16 * 1024]);
+    let responses = vec![
+      b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".to_vec(),
+      b"HTTP/1.1 502 Bad Gateway\r\n\r\n".to_vec(),
+      b"HTTP/1.1 200 Connection established\r\n".to_vec(),
+      oversized_response,
+    ];
+    for response in responses {
+      let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+      let address = listener.local_addr().unwrap();
+      let proxy = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+          stream.read_exact(&mut byte).unwrap();
+          request.push(byte[0]);
+        }
+        let _ = stream.write_all(&response);
+      });
+      let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+      assert!(check_http_proxy_tunnel(
+        &mut stream,
+        "muse.ai",
+        443,
+        Instant::now() + Duration::from_secs(2),
+      )
+      .is_err());
+      proxy.join().unwrap();
+    }
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn rejects_socks5_authentication_and_expired_handshake() {
+    use super::check_socks5_proxy_tunnel;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let proxy = thread::spawn(move || {
+      let (mut stream, _) = listener.accept().unwrap();
+      stream.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+      let mut greeting = [0u8; 3];
+      stream.read_exact(&mut greeting).unwrap();
+      stream.write_all(&[0x05, 0xff]).unwrap();
+    });
+    let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+    assert!(check_socks5_proxy_tunnel(
+      &mut stream,
+      "muse.ai",
+      443,
+      Instant::now() + Duration::from_secs(2),
+    )
+    .is_err());
+    assert!(
+      check_socks5_proxy_tunnel(&mut stream, "muse.ai", 443, Instant::now()).is_err()
+    );
+    proxy.join().unwrap();
   }
 
   #[cfg(windows)]

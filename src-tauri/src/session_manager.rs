@@ -952,6 +952,7 @@ struct InnerState {
 
 pub struct SessionManager {
   current_seq: Arc<AtomicU64>,
+  switch_request_seq: AtomicU64,
   active_view_id: Arc<AtomicU64>,
   view_counter: AtomicU64,
   last_sync_timestamp: AtomicU64,
@@ -972,6 +973,7 @@ impl SessionManager {
 
     Self {
       current_seq: Arc::new(AtomicU64::new(1)),
+      switch_request_seq: AtomicU64::new(0),
       active_view_id: Arc::new(AtomicU64::new(0)),
       view_counter: AtomicU64::new(1),
       last_sync_timestamp: AtomicU64::new(0),
@@ -1857,7 +1859,7 @@ impl SessionManager {
     key: AccountKey,
     is_cold_start: bool,
   ) -> Result<ManagerSnapshot, String> {
-    {
+    let (request_seq, next_seq) = {
       let locked = self.inner.lock().await;
       if let Some(slot) = &locked.active_slot {
         if slot.committed && slot.account_key == key && !is_cold_start {
@@ -1865,7 +1867,11 @@ impl SessionManager {
           return Ok(Self::snapshot_from_locked(&locked));
         }
       }
-    }
+      (
+        self.switch_request_seq.fetch_add(1, Ordering::SeqCst) + 1,
+        self.current_seq.fetch_add(1, Ordering::SeqCst) + 1,
+      )
+    };
 
     #[cfg(windows)]
     let checked_proxy_url = {
@@ -1907,6 +1913,9 @@ impl SessionManager {
         let notice = format!("代理连通性检查失败，已阻止打开该账号：{error}");
         let snapshot = {
           let mut locked = self.inner.lock().await;
+          if self.switch_request_seq.load(Ordering::SeqCst) != request_seq {
+            return Ok(Self::snapshot_from_locked(&locked));
+          }
           if locked
             .store
             .accounts
@@ -1925,8 +1934,6 @@ impl SessionManager {
         return Err(notice);
       }
     }
-
-    let next_seq = self.current_seq.fetch_add(1, Ordering::SeqCst) + 1;
 
     #[cfg(desktop)]
     {
@@ -1948,6 +1955,9 @@ impl SessionManager {
 
       let plan = {
         let mut locked = self.inner.lock().await;
+        if self.switch_request_seq.load(Ordering::SeqCst) != request_seq {
+          return Ok(Self::snapshot_from_locked(&locked));
+        }
         if !locked.conflicts.is_empty() {
           return Err("存在 UUID 归属冲突，已停留在管理页".to_string());
         }
