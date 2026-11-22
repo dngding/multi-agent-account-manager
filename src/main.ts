@@ -1271,7 +1271,7 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                     <span class="copy-cookie-icon" aria-hidden="true"></span>
                   </button>
                 ` : ""}
-                ${provider.id === "muse" ? `
+                ${state.platform === "windows" && provider.id === "muse" ? `
                   <button class="action-icon-btn" data-account-center-uuid="${escapeHtml(acc.uuid)}" title="打开 Meta 账户管理（同账号代理与隔离环境；再次点击返回 Muse）" aria-label="打开 Meta 账户管理" type="button">${ICON_EXTERNAL}</button>
                 ` : ""}
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
