@@ -73,6 +73,7 @@ export interface ProxyPoolSnapshot {
 export interface ProxyPoolHealthEntry {
   entryId: string;
   available: boolean;
+  handshakeOnly: boolean;
   latencyMs: number;
   message: string | null;
 }

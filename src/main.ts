@@ -101,7 +101,8 @@ function proxyPickerProviderId(): ProviderId | null {
 
 function proxyHealthLabel(health: ProxyPoolHealthEntry | undefined, probing: boolean): string {
   if (health?.available) return `可用 · ${health.latencyMs} ms`;
-  if (health) return "握手失败";
+  if (health?.handshakeOnly) return `仅握手可用 · ${health.latencyMs} ms`;
+  if (health) return "不可用";
   return probing ? "待检测" : "未检测";
 }
 
@@ -118,10 +119,15 @@ function proxyPoolOptions(picker: ProxyPickerState): string {
       health: picker.health.get(entry.id),
     }))
     .sort((left, right) => {
-      const leftRank = left.health?.available ? 0 : left.health ? 2 : 1;
-      const rightRank = right.health?.available ? 0 : right.health ? 2 : 1;
+      const healthRank = (health: ProxyPoolHealthEntry | undefined): number => {
+        if (!health) return 1;
+        if (health.available) return 0;
+        return health.handshakeOnly ? 1 : 2;
+      };
+      const leftRank = healthRank(left.health);
+      const rightRank = healthRank(right.health);
       if (leftRank !== rightRank) return leftRank - rightRank;
-      if (left.health?.available && right.health?.available) {
+      if (left.health && right.health && leftRank < 2) {
         return left.health.latencyMs - right.health.latencyMs || left.index - right.index;
       }
       return left.index - right.index;
@@ -141,22 +147,26 @@ function proxyPoolStatus(picker: ProxyPickerState): string {
   if (!picker.pool?.sourcePath) return "未找到代理池，请在“代理池来源”中选择或填写现有本地 YAML 文件。";
   if (!picker.pool.entries.length) return "此来源没有可选的固定代理入口。可更换来源或使用手动地址。";
   const available = picker.pool.entries.filter((entry) => picker.health.get(entry.id)?.available).length;
+  const handshakeOnly = picker.pool.entries.filter((entry) => {
+    const health = picker.health.get(entry.id);
+    return health && !health.available && health.handshakeOnly;
+  }).length;
   const failed = picker.pool.entries.filter((entry) => {
     const health = picker.health.get(entry.id);
-    return health && !health.available;
+    return health && !health.available && !health.handshakeOnly;
   }).length;
-  const unchecked = picker.pool.entries.length - available - failed;
+  const unchecked = picker.pool.entries.length - available - handshakeOnly - failed;
   if (picker.healthError) return `${picker.pool.entries.length} 个入口；可用性检测失败：${picker.healthError}`;
   if (picker.healthLoading) {
-    if (available || failed) {
-      return `可用 ${available} · 握手失败 ${failed} · 待复检 ${unchecked}；可用入口会排在前面`;
+    if (available || handshakeOnly || failed) {
+      return `可用 ${available} · 仅握手 ${handshakeOnly} · 不可用 ${failed} · 待复检 ${unchecked}；可用入口会排在前面`;
     }
     return `${picker.pool.entries.length} 个入口 · 正在检测代理可用性，完成后可用入口会自动排在前面`;
   }
   const checked = picker.healthCheckedAtMs
     ? new Date(picker.healthCheckedAtMs).toLocaleTimeString("zh-CN", { hour12: false })
     : new Date(picker.pool.checkedAtMs).toLocaleTimeString("zh-CN", { hour12: false });
-  return `可用 ${available} · 握手失败 ${failed} · 未检测 ${unchecked} · ${checked} 检测；可用入口已置顶`;
+  return `可用 ${available} · 仅握手 ${handshakeOnly} · 不可用 ${failed} · 未检测 ${unchecked} · ${checked} 检测；可用入口已置顶`;
 }
 
 function proxyPoolSelectedDetail(picker: ProxyPickerState): string {
@@ -166,8 +176,13 @@ function proxyPoolSelectedDetail(picker: ProxyPickerState): string {
   const users = proxyEntryUsers(entry);
   const parts = [users.length ? `本应用已用：${users.map((account) => account.alias).join("、")}` : "本应用暂无其他账号使用此端口或目标"];
   const health = picker.health.get(entry.id);
-  if (health?.available) parts.push(`代理握手可用，延迟 ${health.latencyMs} ms`);
-  if (health && !health.available) parts.push("当前代理握手失败，打开账号前还会重新检查");
+  if (health?.available) parts.push(`代理页面请求已通过，延迟 ${health.latencyMs} ms`);
+  if (health?.handshakeOnly) {
+    parts.push(`代理握手可用但页面请求失败，延迟 ${health.latencyMs} ms；打开前还会重新检查`);
+  }
+  if (health && !health.available && !health.handshakeOnly) {
+    parts.push("当前代理页面请求和握手均失败，打开前还会重新检查");
+  }
   if (entry.duplicateCount > 1) parts.push(`同一目标共有 ${entry.duplicateCount} 个入口`);
   return parts.join("；");
 }
@@ -207,7 +222,7 @@ function renderProxyPicker(manualId: string, manualDraft: string): string {
             <button id="proxy-pool-source-auto" class="btn" type="button"${picker.loading ? " disabled" : ""}>自动发现</button>
           </div>
         </details>
-        <div class="modal-desc">可用性通过当前服务的 HTTPS 代理握手检测，可用入口按延迟排在前面。只读取现有池，不修改或重启代理服务；同目标标识不代表公网 IP。</div>
+        <div class="modal-desc">可用性会实际通过代理请求当前服务页面：返回有效 HTTP 响应的入口置顶，仅能建立代理握手的入口居中，两者都失败的入口置底。只读取现有池，不修改或重启代理服务。</div>
       </div>
     ` : `
       <label class="modal-field-label" for="${manualId}">HTTP / SOCKS5 地址</label>

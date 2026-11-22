@@ -61,6 +61,23 @@ pub async fn check_proxy_route_fast(proxy_url: Url, target_url: Url) -> Result<(
 }
 
 #[cfg(windows)]
+pub async fn check_proxy_http_route_fast(proxy_url: Url, target_url: Url) -> Result<(), String> {
+  let addresses =
+    resolve_proxy_addresses(&proxy_url, Duration::from_secs(1)).await?;
+  tokio::task::spawn_blocking(move || {
+    check_proxy_http_route_sync(
+      &addresses,
+      &proxy_url,
+      &target_url,
+      Duration::from_secs(1),
+      Duration::from_secs(3),
+    )
+  })
+  .await
+  .map_err(|_| "代理页面请求检查任务异常结束".to_string())?
+}
+
+#[cfg(windows)]
 async fn check_proxy_route_with_timeouts(
   proxy_url: Url,
   target_url: Url,
@@ -68,6 +85,26 @@ async fn check_proxy_route_with_timeouts(
   connect_timeout: Duration,
   handshake_timeout: Duration,
 ) -> Result<(), String> {
+  let addresses = resolve_proxy_addresses(&proxy_url, dns_timeout).await?;
+
+  tokio::task::spawn_blocking(move || {
+    check_proxy_route_sync(
+      &addresses,
+      &proxy_url,
+      &target_url,
+      connect_timeout,
+      handshake_timeout,
+    )
+  })
+  .await
+  .map_err(|_| "代理连通性检查任务异常结束".to_string())?
+}
+
+#[cfg(windows)]
+async fn resolve_proxy_addresses(
+  proxy_url: &Url,
+  dns_timeout: Duration,
+) -> Result<Vec<std::net::SocketAddr>, String> {
   let proxy_host = proxy_url
     .host_str()
     .ok_or_else(|| "代理地址缺少主机名".to_string())?
@@ -87,18 +124,7 @@ async fn check_proxy_route_with_timeouts(
   if addresses.is_empty() {
     return Err("无法解析代理服务器地址".to_string());
   }
-
-  tokio::task::spawn_blocking(move || {
-    check_proxy_route_sync(
-      &addresses,
-      &proxy_url,
-      &target_url,
-      connect_timeout,
-      handshake_timeout,
-    )
-  })
-  .await
-  .map_err(|_| "代理连通性检查任务异常结束".to_string())?
+  Ok(addresses)
 }
 
 #[cfg(windows)]
@@ -116,6 +142,47 @@ fn check_proxy_route_sync(
     .port_or_known_default()
     .ok_or_else(|| "服务地址缺少端口".to_string())?;
 
+  let mut stream = connect_proxy_stream(addresses, connect_timeout)?;
+  let handshake_deadline = Instant::now() + handshake_timeout;
+
+  match proxy_url.scheme() {
+    "http" => check_http_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline),
+    "socks5" => {
+      check_socks5_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline)
+    }
+    _ => Err("代理协议只支持 http:// 或 socks5://".to_string()),
+  }
+}
+
+#[cfg(windows)]
+fn check_proxy_http_route_sync(
+  addresses: &[std::net::SocketAddr],
+  proxy_url: &Url,
+  target_url: &Url,
+  connect_timeout: Duration,
+  handshake_timeout: Duration,
+) -> Result<(), String> {
+  let target_host = target_url
+    .host_str()
+    .ok_or_else(|| "服务地址缺少主机名".to_string())?;
+  let target_port = 80;
+  let mut stream = connect_proxy_stream(addresses, connect_timeout)?;
+  let handshake_deadline = Instant::now() + handshake_timeout;
+  match proxy_url.scheme() {
+    "http" => check_http_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline)?,
+    "socks5" => {
+      check_socks5_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline)?
+    }
+    _ => return Err("代理协议只支持 http:// 或 socks5://".to_string()),
+  }
+  check_http_page_response(&mut stream, target_host, target_port, handshake_deadline)
+}
+
+#[cfg(windows)]
+fn connect_proxy_stream(
+  addresses: &[std::net::SocketAddr],
+  connect_timeout: Duration,
+) -> Result<TcpStream, String> {
   let connect_deadline = Instant::now() + connect_timeout;
   let mut stream = None;
   for address in addresses {
@@ -128,17 +195,7 @@ fn check_proxy_route_sync(
       break;
     }
   }
-  let mut stream =
-    stream.ok_or_else(|| "代理服务器当前无法连接，请检查地址、端口和网络".to_string())?;
-  let handshake_deadline = Instant::now() + handshake_timeout;
-
-  match proxy_url.scheme() {
-    "http" => check_http_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline),
-    "socks5" => {
-      check_socks5_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline)
-    }
-    _ => Err("代理协议只支持 http:// 或 socks5://".to_string()),
-  }
+  stream.ok_or_else(|| "代理服务器当前无法连接，请检查地址、端口和网络".to_string())
 }
 
 #[cfg(windows)]
@@ -287,6 +344,60 @@ fn check_socks5_proxy_tunnel(
   Ok(())
 }
 
+#[cfg(windows)]
+fn check_http_page_response(
+  stream: &mut TcpStream,
+  target_host: &str,
+  target_port: u16,
+  deadline: Instant,
+) -> Result<(), String> {
+  set_handshake_timeout(stream, deadline)?;
+  write!(
+    stream,
+    "GET / HTTP/1.1\r\nHost: {target_host}:{target_port}\r\nConnection: close\r\n\r\n"
+  )
+  .map_err(|_| "无法通过代理发送服务页面请求".to_string())?;
+
+  let mut header = Vec::with_capacity(256);
+  let mut chunk = [0u8; 1024];
+  while header.len() < 16 * 1024 {
+    set_handshake_timeout(stream, deadline)?;
+    let read_len = (16 * 1024 - header.len()).min(chunk.len());
+    let bytes_read = stream
+      .read(&mut chunk[..read_len])
+      .map_err(|_| "代理未能返回服务页面响应".to_string())?;
+    if bytes_read == 0 {
+      return Err("代理未能返回服务页面响应".to_string());
+    }
+    header.extend_from_slice(&chunk[..bytes_read]);
+    if let Some(header_end) = header.windows(4).position(|window| window == b"\r\n\r\n") {
+      header.truncate(header_end + 4);
+      break;
+    }
+  }
+  if !header.ends_with(b"\r\n\r\n") {
+    return Err("服务页面响应头过大".to_string());
+  }
+  let response = std::str::from_utf8(&header).map_err(|_| "服务页面返回了无效响应".to_string())?;
+  let mut status_parts = response
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .split_whitespace();
+  let version = status_parts.next();
+  let status_code = status_parts
+    .next()
+    .and_then(|value| value.parse::<u16>().ok());
+  if !matches!(version, Some("HTTP/1.0" | "HTTP/1.1")) {
+    return Err("服务页面返回了无效 HTTP 状态".to_string());
+  }
+  match status_code {
+    Some(407) => Err("代理要求身份验证；当前版本不支持带认证的代理".to_string()),
+    Some(status) if (200..500).contains(&status) => Ok(()),
+    _ => Err("代理未能通过 HTTP 访问服务页面".to_string()),
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use super::parse_account_proxy;
@@ -403,6 +514,52 @@ mod tests {
     .is_err());
     assert!(check_socks5_proxy_tunnel(&mut stream, "muse.ai", 443, Instant::now()).is_err());
     proxy.join().unwrap();
+  }
+
+  #[cfg(windows)]
+  #[test]
+  fn validates_the_http_page_response_after_a_proxy_tunnel() {
+    use super::check_http_page_response;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    for (response, expected_ok) in [
+      (
+        b"HTTP/1.1 301 Moved Permanently\r\nLocation: https://muse.ai/\r\n\r\n".as_slice(),
+        true,
+      ),
+      (
+        b"HTTP/1.1 407 Proxy Authentication Required\r\n\r\n".as_slice(),
+        false,
+      ),
+      (b"HTTP/1.1 502 Bad Gateway\r\n\r\n".as_slice(), false),
+    ] {
+      let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+      let address = listener.local_addr().unwrap();
+      let response = response.to_vec();
+      let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut byte = [0u8; 1];
+        while !request.ends_with(b"\r\n\r\n") {
+          stream.read_exact(&mut byte).unwrap();
+          request.push(byte[0]);
+        }
+        assert!(request.starts_with(b"GET / HTTP/1.1\r\n"));
+        stream.write_all(&response).unwrap();
+      });
+      let mut stream = TcpStream::connect_timeout(&address, Duration::from_secs(2)).unwrap();
+      let result = check_http_page_response(
+        &mut stream,
+        "muse.ai",
+        80,
+        Instant::now() + Duration::from_secs(2),
+      );
+      assert_eq!(result.is_ok(), expected_ok);
+      server.join().unwrap();
+    }
   }
 
   #[cfg(windows)]

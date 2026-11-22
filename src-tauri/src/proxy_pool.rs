@@ -63,6 +63,7 @@ pub struct ProxyPoolSnapshot {
 pub struct ProxyPoolHealthEntry {
   pub entry_id: String,
   pub available: bool,
+  pub handshake_only: bool,
   pub latency_ms: u64,
   pub message: Option<String>,
 }
@@ -186,20 +187,56 @@ impl ProxyPool {
             tasks.spawn(async move {
               let _permit = permit;
               let probe_started = Instant::now();
-              let result = async {
-                let proxy_url =
-                  Url::parse(&entry.proxy_url).map_err(|_| "代理池入口地址格式错误".to_string())?;
-                crate::network::check_proxy_route_fast(proxy_url, target_url).await
-              }
+              let proxy_url = match Url::parse(&entry.proxy_url) {
+                Ok(proxy_url) => proxy_url,
+                Err(_) => {
+                  return (
+                    key,
+                    ProxyPoolHealthEntry {
+                      entry_id: entry.id,
+                      available: false,
+                      handshake_only: false,
+                      latency_ms: 0,
+                      message: Some("代理池入口地址格式错误".to_string()),
+                    },
+                  );
+                }
+              };
+              let page_result = crate::network::check_proxy_http_route_fast(
+                proxy_url.clone(),
+                target_url.clone(),
+              )
               .await;
+              let (available, handshake_only, message) = match page_result {
+                Ok(()) => (true, false, None),
+                Err(page_error) => {
+                  let handshake_result =
+                    crate::network::check_proxy_route_fast(proxy_url, target_url).await;
+                  match handshake_result {
+                    Ok(()) => (
+                      false,
+                      true,
+                      Some(format!("页面请求失败：{page_error}")),
+                    ),
+                    Err(handshake_error) => (
+                      false,
+                      false,
+                      Some(format!(
+                        "页面请求失败：{page_error}；代理握手失败：{handshake_error}"
+                      )),
+                    ),
+                  }
+                }
+              };
               let latency_ms = probe_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
               (
                 key,
                 ProxyPoolHealthEntry {
                   entry_id: entry.id,
-                  available: result.is_ok(),
+                  available,
+                  handshake_only,
                   latency_ms,
-                  message: result.err(),
+                  message,
                 },
               )
             });
@@ -348,12 +385,21 @@ fn health_cache_key(provider_id: ProviderId, entry: &ProxyPoolEntry) -> String {
 
 fn sort_health_entries(entries: &mut [ProxyPoolHealthEntry]) {
   entries.sort_by(|left, right| {
-    right
-      .available
-      .cmp(&left.available)
+    health_rank(left)
+      .cmp(&health_rank(right))
       .then_with(|| left.latency_ms.cmp(&right.latency_ms))
       .then_with(|| left.entry_id.cmp(&right.entry_id))
   });
+}
+
+fn health_rank(entry: &ProxyPoolHealthEntry) -> u8 {
+  if entry.available {
+    0
+  } else if entry.handshake_only {
+    1
+  } else {
+    2
+  }
 }
 
 /// Re-read the selected file before use. A cached picker result never authorizes routing.
@@ -1039,18 +1085,28 @@ mod tests {
       ProxyPoolHealthEntry {
         entry_id: "unavailable-fast".to_string(),
         available: false,
+        handshake_only: false,
         latency_ms: 5,
         message: Some("握手失败".to_string()),
       },
       ProxyPoolHealthEntry {
+        entry_id: "handshake-only".to_string(),
+        available: false,
+        handshake_only: true,
+        latency_ms: 10,
+        message: Some("页面请求失败".to_string()),
+      },
+      ProxyPoolHealthEntry {
         entry_id: "available-slow".to_string(),
         available: true,
+        handshake_only: false,
         latency_ms: 80,
         message: None,
       },
       ProxyPoolHealthEntry {
         entry_id: "available-fast".to_string(),
         available: true,
+        handshake_only: false,
         latency_ms: 20,
         message: None,
       },
@@ -1061,7 +1117,12 @@ mod tests {
         .iter()
         .map(|entry| entry.entry_id.as_str())
         .collect::<Vec<_>>(),
-      vec!["available-fast", "available-slow", "unavailable-fast"]
+      vec![
+        "available-fast",
+        "available-slow",
+        "handshake-only",
+        "unavailable-fast"
+      ]
     );
   }
 
