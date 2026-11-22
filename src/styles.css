@@ -892,12 +892,13 @@ body,
   flex-shrink: 0;
   align-items: center;
   gap: 2px;
-  opacity: 0;
-  transition: opacity 0.14s ease;
 }
 
-.account-row:hover .row-ops,
-.account-row.active .row-ops {
+.row-ops > .action-icon-btn:not(.copy-cookie-btn) {
+  opacity: 0;
+}
+
+.account-row:is(:hover, :focus-within, .active) .row-ops > .action-icon-btn {
   opacity: 1;
 }
 
@@ -963,7 +964,7 @@ body,
 }
 
 @media (hover: none) {
-  .row-ops {
+  .row-ops > .action-icon-btn:not(.copy-cookie-btn) {
     opacity: 1;
   }
 }
@@ -979,7 +980,7 @@ body,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.14s ease, color 0.14s ease;
+  transition: background 0.14s ease, color 0.14s ease, opacity 0.14s ease;
 }
 
 .action-icon-btn:hover {
@@ -990,6 +991,57 @@ body,
 .action-icon-btn.danger:hover {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.copy-cookie-btn,
+.copy-cookie-icon {
+  position: relative;
+}
+
+.copy-cookie-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.copy-cookie-icon::before,
+.copy-cookie-icon::after {
+  position: absolute;
+  content: "";
+  width: 10px;
+  height: 10px;
+  border: 1.4px solid currentColor;
+  border-radius: 2px;
+}
+
+.copy-cookie-icon::before {
+  top: 0;
+  left: 0;
+  clip-path: polygon(0 0, 100% 0, 100% 36%, 36% 36%, 36% 100%, 0 100%);
+}
+
+.copy-cookie-icon::after {
+  right: 0;
+  bottom: 0;
+}
+
+.copy-cookie-btn.copied {
+  color: var(--online);
+}
+
+.copy-cookie-btn:is(:hover, :focus-visible, .copied)::after {
+  content: attr(data-copy-label);
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  right: calc(100% + 5px);
+  transform: translateY(-50%);
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--text-main);
+  color: #ffffff;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
 }
 
 .mini-btn {

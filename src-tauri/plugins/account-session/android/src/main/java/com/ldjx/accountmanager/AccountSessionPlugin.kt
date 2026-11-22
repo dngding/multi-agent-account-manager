@@ -1,9 +1,13 @@
 package com.ldjx.accountmanager
 
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PersistableBundle
 import android.provider.Settings
 import androidx.core.content.FileProvider
 import androidx.webkit.ProfileStore
@@ -58,6 +62,12 @@ class CloseSessionArgs {
 @InvokeArg
 class DeleteProfileArgs {
     var uuid: String = ""
+}
+
+@InvokeArg
+class CopyProfileCookieArgs {
+    var uuid: String = ""
+    var url: String = ""
 }
 
 @InvokeArg
@@ -208,6 +218,40 @@ class AccountSessionPlugin(private val activity: Activity) : Plugin(activity) {
                 invoke.resolve(JSObject())
             } catch (t: Throwable) {
                 invoke.reject(t.message ?: "删除 Android Profile 失败")
+            }
+        }
+    }
+
+    @Command
+    fun copyProfileCookie(invoke: Invoke) {
+        val args = invoke.parseArgs(CopyProfileCookieArgs::class.java)
+        activity.runOnUiThread {
+            try {
+                if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) {
+                    invoke.reject("系统 WebView 不支持 MULTI_PROFILE")
+                    return@runOnUiThread
+                }
+                val cookies = ProfileStore.getInstance().getProfile(args.uuid)
+                    ?.cookieManager?.getCookie(args.url)
+                if (cookies.isNullOrEmpty()) {
+                    invoke.reject("该账号暂无可复制的 Cookie，请先登录")
+                    return@runOnUiThread
+                }
+                val clipboard = activity.getSystemService(ClipboardManager::class.java)
+                if (clipboard == null) {
+                    invoke.reject("无法写入系统剪贴板，请重试")
+                    return@runOnUiThread
+                }
+                val clip = ClipData.newPlainText("Cookie", cookies)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    clip.description.extras = PersistableBundle().apply {
+                        putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                    }
+                }
+                clipboard.setPrimaryClip(clip)
+                invoke.resolve(JSObject())
+            } catch (error: Exception) {
+                invoke.reject("复制 Cookie 失败，请稍后重试")
             }
         }
     }

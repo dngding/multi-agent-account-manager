@@ -110,6 +110,20 @@ async fn set_account_proxy(
 }
 
 #[tauri::command]
+async fn copy_account_cookie(
+  app: AppHandle,
+  mgr: State<'_, Arc<SessionManager>>,
+  webview: tauri::Webview,
+  provider_id: String,
+  uuid: String,
+) -> Result<(), String> {
+  if webview.label() != "manager" {
+    return Err("仅账号管理页可以复制 Cookie".to_string());
+  }
+  mgr.copy_account_cookie(&app, &provider_id, &uuid).await
+}
+
+#[tauri::command]
 async fn remove_account(
   app: AppHandle,
   mgr: State<'_, Arc<SessionManager>>,
@@ -284,6 +298,7 @@ pub fn run() {
       add_account,
       rename_account,
       set_account_proxy,
+      copy_account_cookie,
       remove_account,
       switch_account,
       set_modal_active,
@@ -314,5 +329,14 @@ mod capability_tests {
         "manager capability must allow {permission}"
       );
     }
+  }
+
+  #[test]
+  fn cookie_copy_command_is_allowed_for_manager_webview() {
+    let capability = include_str!("../capabilities/manager.json");
+    assert!(
+      capability.contains("\"allow-copy-account-cookie\""),
+      "manager capability must allow cookie copying"
+    );
   }
 }

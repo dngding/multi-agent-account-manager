@@ -1,6 +1,6 @@
 [package]
 name = "multi-agent-account-manager"
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
 
@@ -27,12 +27,15 @@ tauri = { version = "=2.12.6", features = ["unstable"] }
 open = "5"
 reqwest = { version = "0.13", default-features = false, features = ["native-tls", "http2", "system-proxy"] }
 
+[target.'cfg(any(target_os = "macos", windows))'.dependencies]
+arboard = { version = "3.6.1", default-features = false }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSUUID", "NSString", "NSError", "block2"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSDate", "NSError", "NSHTTPCookie", "NSString", "NSUUID", "block2"] }
 objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSView", "NSResponder"] }
-objc2-web-kit = { version = "0.3.2", default-features = false, features = ["objc2-app-kit", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "block2"] }
+objc2-web-kit = { version = "0.3.2", default-features = false, features = ["objc2-app-kit", "WKHTTPCookieStore", "WKWebView", "WKWebViewConfiguration", "WKWebsiteDataStore", "block2"] }
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"

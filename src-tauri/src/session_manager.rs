@@ -1712,6 +1712,146 @@ impl SessionManager {
     Err("每账号独立代理目前仅支持 Windows 桌面版".to_string())
   }
 
+  pub async fn copy_account_cookie(
+    &self,
+    app: &AppHandle,
+    raw_provider: &str,
+    raw_uuid: &str,
+  ) -> Result<(), String> {
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
+    let key = AccountKey {
+      provider_id,
+      uuid: uuid.clone(),
+    };
+
+    let (account, profile_dir, warm_label) = {
+      let locked = self.inner.lock().await;
+      if !locked.conflicts.is_empty() {
+        return Err("存在 UUID 归属冲突，请先完成归属裁决".to_string());
+      }
+      if locked.store.pending_cleanup.contains(&key) {
+        return Err("该账号正在清理，暂时无法复制 Cookie".to_string());
+      }
+      let account = locked
+        .store
+        .accounts
+        .iter()
+        .find(|account| account.provider_id == provider_id && account.uuid == uuid)
+        .cloned()
+        .ok_or_else(|| "账号归属核对失败，未找到可用的账号".to_string())?;
+      let profile_dir = locked.app_data_dir.join("profiles").join(&uuid);
+      #[cfg(desktop)]
+      let warm_label = locked
+        .warm_pool
+        .get(&key)
+        .map(|entry| entry.webview_label.clone());
+      #[cfg(not(desktop))]
+      let warm_label: Option<String> = None;
+      (account, profile_dir, warm_label)
+    };
+
+    let spec = get_provider(provider_id);
+    if !spec.info.enabled {
+      return Err("该服务尚未开放应用内嵌".to_string());
+    }
+    let url = Url::parse(spec.info.entry_url).map_err(|_| "服务入口地址无效".to_string())?;
+
+    #[cfg(target_os = "macos")]
+    {
+      let parsed_uuid = Uuid::parse_str(&uuid).map_err(|_| "账号资料标识无效".to_string())?;
+      let header = platform::read_macos_cookie_header(app, parsed_uuid, url).await?;
+      platform::write_cookie_clipboard(app, header).await
+    }
+    #[cfg(windows)]
+    {
+      let header = self
+        .read_windows_cookie_header(app, account, profile_dir, warm_label, url)
+        .await?;
+      platform::write_cookie_clipboard(app, header).await
+    }
+    #[cfg(target_os = "android")]
+    {
+      let _ = (account, profile_dir, warm_label);
+      platform::android::copy_profile_cookie(app, &uuid, url.as_str()).await
+    }
+    #[cfg(all(
+      not(target_os = "macos"),
+      not(windows),
+      not(target_os = "android")
+    ))]
+    {
+      let _ = (app, account, profile_dir, warm_label, url);
+      Err("当前平台不支持复制 Cookie".to_string())
+    }
+  }
+
+  #[cfg(windows)]
+  async fn read_windows_cookie_header(
+    &self,
+    app: &AppHandle,
+    account: AccountRecord,
+    profile_dir: PathBuf,
+    warm_label: Option<String>,
+    url: Url,
+  ) -> Result<String, String> {
+    let existing = warm_label.and_then(|label| app.get_webview(&label));
+    let temporary = existing.is_none();
+    let webview = match existing {
+      Some(webview) => webview,
+      None => {
+        if !profile_dir.is_dir() {
+          return Err("该账号暂无可复制的 Cookie，请先登录".to_string());
+        }
+        let proxy_url = account.validated_proxy()?;
+        let main_win = app.get_window("main").ok_or_else(|| "主窗口不存在".to_string())?;
+        let instance_id = self.view_counter.fetch_add(1, Ordering::SeqCst);
+        let mut builder = tauri::webview::WebviewBuilder::new(
+          format!("cookie-{instance_id}"),
+          tauri::WebviewUrl::External("about:blank".parse().expect("valid blank url")),
+        )
+        .data_directory(profile_dir.clone())
+        .focused(false);
+        if let Some(proxy_url) = proxy_url {
+          builder = builder.proxy_url(proxy_url);
+        }
+        let (position, size) = Self::initial_hidden_child_rect(&main_win);
+        let webview = main_win
+          .add_child(builder, position, size)
+          .map_err(|_| "无法打开该账号的会话资料，请重试".to_string())?;
+        let _ = webview.hide();
+        webview
+      }
+    };
+
+    let parsed_uuid =
+      Uuid::parse_str(&account.uuid).map_err(|_| "账号资料标识无效".to_string())?;
+    let result = async {
+      platform::verify_desktop_profile_binding(&webview, parsed_uuid, &profile_dir).await?;
+      let read_view = webview.clone();
+      tauri::async_runtime::spawn_blocking(move || {
+        let cookies = read_view
+          .cookies_for_url(url)
+          .map_err(|_| "读取账号 Cookie 失败".to_string())?;
+        Ok(
+          cookies
+            .iter()
+            .map(|cookie| format!("{}={}", cookie.name(), cookie.value()))
+            .collect::<Vec<_>>()
+            .join("; "),
+        )
+      })
+      .await
+      .map_err(|_| "读取账号 Cookie 中断".to_string())?
+    }
+    .await;
+    if temporary {
+      let _ = webview.close();
+    }
+    result
+  }
+
   pub async fn remove_account(
     &self,
     app: &AppHandle,

@@ -137,6 +137,106 @@ fn normalize_win_path(path: &Path) -> String {
     .to_ascii_lowercase()
 }
 
+#[cfg(target_os = "macos")]
+pub async fn read_macos_cookie_header(
+  app: &tauri::AppHandle,
+  uuid: Uuid,
+  url: url::Url,
+) -> Result<String, String> {
+  use objc2::{AnyThread, MainThreadMarker};
+  use objc2_foundation::{NSArray, NSHTTPCookie, NSString, NSUUID};
+  use objc2_web_kit::WKWebsiteDataStore;
+  use std::cell::RefCell;
+  use std::ptr::NonNull;
+
+  let host = url.host_str().ok_or_else(|| "服务域名无效".to_string())?.to_owned();
+  let path = url.path().to_owned();
+  let (sender, receiver) = tokio::sync::oneshot::channel();
+  app
+    .run_on_main_thread(move || {
+      let identifier = NSString::from_str(&uuid.to_string());
+      let Some(identifier) = NSUUID::initWithUUIDString(NSUUID::alloc(), &identifier) else {
+        let _ = sender.send(Err("账号资料标识无效".to_string()));
+        return;
+      };
+      let Some(main_thread) = MainThreadMarker::new() else {
+        let _ = sender.send(Err("读取账号 Cookie 失败".to_string()));
+        return;
+      };
+      let store = unsafe { WKWebsiteDataStore::dataStoreForIdentifier(&identifier, main_thread) };
+      let sender = RefCell::new(Some(sender));
+      let callback = block2::RcBlock::new(move |cookies: NonNull<NSArray<NSHTTPCookie>>| {
+        let mut pairs = Vec::new();
+        for cookie in unsafe { cookies.as_ref() }.to_vec() {
+          let domain = cookie.domain().to_string().to_ascii_lowercase();
+          let domain_matches = match domain.strip_prefix('.') {
+            Some(domain) => {
+              host == domain
+                || host
+                  .strip_suffix(domain)
+                  .is_some_and(|prefix| prefix.ends_with('.'))
+            }
+            None => host == domain,
+          };
+          let cookie_path = cookie.path().to_string();
+          let path_matches = path == cookie_path
+            || path.strip_prefix(&cookie_path).is_some_and(|suffix| {
+              cookie_path.ends_with('/') || suffix.starts_with('/')
+            });
+          let expired = cookie
+            .expiresDate()
+            .is_some_and(|date| date.timeIntervalSinceNow() <= 0.0);
+          if domain_matches && path_matches && !expired {
+            pairs.push((cookie_path.len(), format!("{}={}", cookie.name(), cookie.value())));
+          }
+        }
+        pairs.sort_by_key(|(path_len, _)| std::cmp::Reverse(*path_len));
+        let header = pairs
+          .into_iter()
+          .map(|(_, pair)| pair)
+          .collect::<Vec<_>>()
+          .join("; ");
+        if let Some(sender) = sender.borrow_mut().take() {
+          let _ = sender.send(Ok(header));
+        }
+      });
+      unsafe { store.httpCookieStore().getAllCookies(&callback) };
+    })
+    .map_err(|_| "读取账号 Cookie 失败".to_string())?;
+  receiver
+    .await
+    .map_err(|_| "读取账号 Cookie 中断".to_string())?
+}
+
+#[cfg(any(target_os = "macos", windows))]
+pub async fn write_cookie_clipboard(app: &tauri::AppHandle, header: String) -> Result<(), String> {
+  #[cfg(target_os = "macos")]
+  use arboard::SetExtApple;
+  #[cfg(windows)]
+  use arboard::SetExtWindows;
+
+  if header.is_empty() {
+    return Err("该账号暂无可复制的 Cookie，请先登录".to_string());
+  }
+  let (sender, receiver) = tokio::sync::oneshot::channel();
+  app
+    .run_on_main_thread(move || {
+      let result = arboard::Clipboard::new().and_then(|mut clipboard| {
+        let text = clipboard.set().exclude_from_history();
+        #[cfg(windows)]
+        let text = text.exclude_from_cloud().exclude_from_monitoring();
+        text.text(header)
+      });
+      let _ = sender.send(
+        result.map_err(|_| "无法写入系统剪贴板，请重试".to_string()),
+      );
+    })
+    .map_err(|_| "无法写入系统剪贴板，请重试".to_string())?;
+  receiver
+    .await
+    .map_err(|_| "写入系统剪贴板中断".to_string())?
+}
+
 #[cfg(desktop)]
 pub async fn delete_desktop_profile(
   app: &tauri::AppHandle,

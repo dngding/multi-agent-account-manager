@@ -45,6 +45,7 @@ let optimisticSwitching: AccountKey | null = null;
 let busy = false;
 let modalSubmitting = false;
 let lastRenderedUpdateStage: string | null = null;
+const copyingCookies = new Set<string>();
 
 interface ProxyPickerState {
   mode: "pool" | "manual";
@@ -1083,6 +1084,10 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
   const switchingKey = effectiveSwitchingKey(state);
   const isAndroid = state.platform === "android";
   const supportsAccountProxy = state.platform === "windows";
+  const supportsCookieCopy =
+    state.platform === "windows" ||
+    state.platform === "macos" ||
+    state.platform === "android";
 
   const noticeHtml = state.notice
     ? `
@@ -1261,6 +1266,11 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                 ${networkPresentation?.message ? `<div class="account-network-notice ${networkPresentation.className}">${escapeHtml(networkPresentation.message)}</div>` : ""}
               </div>
               <div class="row-ops">
+                ${supportsCookieCopy ? `
+                  <button class="action-icon-btn copy-cookie-btn" data-copy-cookie-uuid="${escapeHtml(acc.uuid)}" data-copy-label="复制 Cookie" aria-label="复制 Cookie" type="button">
+                    <span class="copy-cookie-icon" aria-hidden="true"></span>
+                  </button>
+                ` : ""}
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
                 ${supportsAccountProxy ? `<button class="action-icon-btn proxy-action ${acc.proxyUrl ? "configured" : ""}" data-proxy-uuid="${escapeHtml(acc.uuid)}" title="${acc.proxyUrl ? "已配置独立代理（切号前检查连通性）" : "配置独立代理"}" type="button">${ICON_NETWORK}</button>` : ""}
                 <button class="action-icon-btn danger" data-remove-uuid="${escapeHtml(acc.uuid)}" title="从本机移除" type="button">${ICON_TRASH}</button>
@@ -1551,6 +1561,38 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
       const keepProviderId = btn.dataset.resolveProvider;
       if (uuid && keepProviderId) {
         await callCommand("resolve_uuid_conflict", { keepProviderId, uuid });
+      }
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-copy-cookie-uuid]").forEach((button) => {
+    let feedbackTimer: number | undefined;
+    button.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      const uuid = button.dataset.copyCookieUuid;
+      if (!uuid) return;
+      const copyKey = `${provider.id}:${uuid}`;
+      if (copyingCookies.has(copyKey)) return;
+      copyingCookies.add(copyKey);
+      window.clearTimeout(feedbackTimer);
+      button.classList.remove("copied");
+      button.dataset.copyLabel = "复制中…";
+      try {
+        await invoke<void>("copy_account_cookie", { providerId: provider.id, uuid });
+        button.dataset.copyLabel = "已复制 Cookie";
+        button.classList.add("copied");
+        feedbackTimer = window.setTimeout(() => {
+          button.classList.remove("copied");
+          button.dataset.copyLabel = "复制 Cookie";
+        }, 1800);
+      } catch (err) {
+        button.dataset.copyLabel = "复制 Cookie";
+        if (snapshot?.selectedProviderId === provider.id) {
+          snapshot = { ...snapshot, notice: String(err) };
+          rerenderPreservingScroll();
+        }
+      } finally {
+        copyingCookies.delete(copyKey);
       }
     });
   });
