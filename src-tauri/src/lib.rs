@@ -162,6 +162,18 @@ async fn open_official_site(
 }
 
 #[tauri::command]
+async fn toggle_muse_account_management(
+  app: AppHandle,
+  mgr: State<'_, Arc<SessionManager>>,
+  provider_id: String,
+  uuid: String,
+) -> Result<ManagerSnapshot, String> {
+  mgr
+    .toggle_muse_account_management(&app, &provider_id, &uuid)
+    .await
+}
+
+#[tauri::command]
 async fn resolve_uuid_conflict(
   mgr: State<'_, Arc<SessionManager>>,
   keep_provider_id: String,
@@ -303,6 +315,7 @@ pub fn run() {
       switch_account,
       set_modal_active,
       open_official_site,
+      toggle_muse_account_management,
       resolve_uuid_conflict,
       dismiss_notice,
       trigger_quota_sync,
@@ -337,6 +350,15 @@ mod capability_tests {
     assert!(
       capability.contains("\"allow-copy-account-cookie\""),
       "manager capability must allow cookie copying"
+    );
+  }
+
+  #[test]
+  fn account_management_command_is_allowed_for_manager_webview() {
+    let capability = include_str!("../capabilities/manager.json");
+    assert!(
+      capability.contains("\"allow-toggle-muse-account-management\""),
+      "manager capability must allow Meta account management"
     );
   }
 }

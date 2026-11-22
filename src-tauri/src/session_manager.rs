@@ -1,7 +1,8 @@
 use crate::platform::{self, current_platform_name};
 use crate::providers::{
-  all_provider_infos, classify_top_level_url, get_provider, is_verified_callback_origin,
-  NavigationDecision, ProviderId, ProviderInfo,
+  all_provider_infos, classify_top_level_url, get_provider, is_muse_account_center_url,
+  is_verified_callback_origin, NavigationDecision, ProviderId, ProviderInfo,
+  MUSE_ACCOUNT_CENTER_URL,
 };
 use crate::storage::{
   detect_conflicts, detect_shared_proxy_accounts, load_or_migrate_store, normalize_uuid, now_ms,
@@ -1965,6 +1966,121 @@ impl SessionManager {
     }
 
     Ok(self.get_snapshot().await)
+  }
+
+  pub async fn toggle_muse_account_management(
+    self: &Arc<Self>,
+    app: &AppHandle,
+    raw_provider: &str,
+    raw_uuid: &str,
+  ) -> Result<ManagerSnapshot, String> {
+    let provider_id =
+      ProviderId::parse(raw_provider).ok_or_else(|| "无效的服务标识".to_string())?;
+    if provider_id != ProviderId::Muse {
+      return Err("Meta 账户管理仅适用于 Muse 账号".to_string());
+    }
+    let uuid = normalize_uuid(raw_uuid).ok_or_else(|| "无效的账号 UUID".to_string())?;
+    let key = AccountKey { provider_id, uuid };
+
+    #[cfg(desktop)]
+    {
+      let already_active = {
+        let locked = self.inner.lock().await;
+        locked
+          .active_slot
+          .as_ref()
+          .is_some_and(|slot| slot.account_key == key && slot.committed)
+      };
+      if !already_active {
+        self
+          .switch_account_internal(app, key.clone(), false)
+          .await?;
+      }
+
+      let (webview_label, popup_label, fallback_last_url, alias) = {
+        let locked = self.inner.lock().await;
+        let active_matches = locked
+          .active_slot
+          .as_ref()
+          .is_some_and(|slot| slot.account_key == key);
+        if !active_matches {
+          return Err("账号未能切换到前台，已取消打开 Meta 账户管理".to_string());
+        }
+        let entry = locked
+          .warm_pool
+          .get(&key)
+          .ok_or_else(|| "账号视图尚未就绪，请稍后重试".to_string())?;
+        let alias = locked
+          .store
+          .accounts
+          .iter()
+          .find(|account| account.provider_id == provider_id && account.uuid == key.uuid)
+          .map(|account| account.alias.clone())
+          .ok_or_else(|| "账号归属核对失败".to_string())?;
+        (
+          entry.webview_label.clone(),
+          entry.popup_label.clone(),
+          entry.last_url.clone(),
+          alias,
+        )
+      };
+
+      if let Some(popup_label) = popup_label {
+        if let Some(popup) = app.get_webview_window(&popup_label) {
+          let _ = popup.close();
+        }
+      }
+
+      let webview = app
+        .get_webview(&webview_label)
+        .ok_or_else(|| "账号视图不存在，请重新打开账号".to_string())?;
+      let returning_to_muse = webview
+        .url()
+        .ok()
+        .filter(|url| url.as_str() != "about:blank")
+        .or(fallback_last_url)
+        .is_some_and(|url| is_muse_account_center_url(&url));
+      let target = if returning_to_muse {
+        Url::parse(get_provider(provider_id).info.entry_url)
+          .map_err(|error| format!("服务入口地址错误: {error}"))?
+      } else {
+        Url::parse(MUSE_ACCOUNT_CENTER_URL)
+          .map_err(|error| format!("Meta 账户管理地址错误: {error}"))?
+      };
+      webview
+        .navigate(target.clone())
+        .map_err(|error| format!("打开 Meta 账户管理失败: {error}"))?;
+
+      if let Some(main_window) = app.get_window("main") {
+        let title = if returning_to_muse {
+          format!("Muse · {alias}")
+        } else {
+          format!("Meta 账户管理 · {alias}")
+        };
+        let _ = main_window.set_title(&title);
+      }
+
+      let snapshot = {
+        let mut locked = self.inner.lock().await;
+        if let Some(entry) = locked.warm_pool.get_mut(&key) {
+          entry.last_url = Some(target);
+        }
+        locked.notice = Some(if returning_to_muse {
+          "已返回 Muse。".to_string()
+        } else {
+          "已打开 Meta 账户管理；再次点击同一账号的账户管理按钮可返回 Muse。".to_string()
+        });
+        Self::snapshot_from_locked(&locked)
+      };
+      self.emit_snapshot(app, &snapshot);
+      Ok(snapshot)
+    }
+
+    #[cfg(not(desktop))]
+    {
+      let _ = (app, key);
+      Err("Meta 账户管理目前仅支持 Windows 桌面版".to_string())
+    }
   }
 
   pub async fn resolve_uuid_conflict(

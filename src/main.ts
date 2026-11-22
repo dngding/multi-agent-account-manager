@@ -1271,6 +1271,9 @@ function renderMiddleContent(state: ManagerSnapshot, provider: ProviderInfo): st
                     <span class="copy-cookie-icon" aria-hidden="true"></span>
                   </button>
                 ` : ""}
+                ${provider.id === "muse" ? `
+                  <button class="action-icon-btn" data-account-center-uuid="${escapeHtml(acc.uuid)}" title="打开 Meta 账户管理（同账号代理与隔离环境；再次点击返回 Muse）" aria-label="打开 Meta 账户管理" type="button">${ICON_EXTERNAL}</button>
+                ` : ""}
                 <button class="action-icon-btn" data-rename-uuid="${escapeHtml(acc.uuid)}" title="修改备注" type="button">${ICON_EDIT}</button>
                 ${supportsAccountProxy ? `<button class="action-icon-btn proxy-action ${acc.proxyUrl ? "configured" : ""}" data-proxy-uuid="${escapeHtml(acc.uuid)}" title="${acc.proxyUrl ? "已配置独立代理（切号前检查连通性）" : "配置独立代理"}" type="button">${ICON_NETWORK}</button>` : ""}
                 <button class="action-icon-btn danger" data-remove-uuid="${escapeHtml(acc.uuid)}" title="从本机移除" type="button">${ICON_TRASH}</button>
@@ -1609,6 +1612,25 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
           draft: acc.autoAlias ? "" : acc.alias,
         });
       }
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-account-center-uuid]").forEach((btn) => {
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const uuid = btn.dataset.accountCenterUuid;
+      if (!uuid) return;
+      const alreadyWarm = state.warmAccounts.some(
+        (key) => key.providerId === provider.id && key.uuid === uuid
+      );
+      const alreadyActive =
+        state.activeAccount?.providerId === provider.id &&
+        state.activeAccount?.uuid === uuid;
+      await callCommand(
+        "toggle_muse_account_management",
+        { providerId: provider.id, uuid },
+        !alreadyActive && !alreadyWarm ? { providerId: provider.id, uuid } : null
+      );
     });
   });
 

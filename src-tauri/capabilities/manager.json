@@ -20,6 +20,7 @@
     "allow-switch-account",
     "allow-set-modal-active",
     "allow-open-official-site",
+    "allow-toggle-muse-account-management",
     "allow-resolve-uuid-conflict",
     "allow-dismiss-notice",
     "allow-trigger-quota-sync",

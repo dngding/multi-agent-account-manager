@@ -12,6 +12,7 @@ const APP_COMMANDS: &[&str] = &[
   "switch_account",
   "set_modal_active",
   "open_official_site",
+  "toggle_muse_account_management",
   "resolve_uuid_conflict",
   "dismiss_notice",
   "trigger_quota_sync",

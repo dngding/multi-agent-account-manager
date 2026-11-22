@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+pub const MUSE_ACCOUNT_CENTER_URL: &str = "https://accountscenter.meta.com/";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderId {
@@ -177,4 +179,47 @@ pub fn is_verified_callback_origin(provider_id: ProviderId, url: &Url) -> bool {
     .callback_origins
     .iter()
     .any(|allowed| allowed.eq_ignore_ascii_case(&origin))
+}
+
+pub fn is_muse_account_center_url(url: &Url) -> bool {
+  if url.scheme() != "https" {
+    return false;
+  }
+  let Some(host) = url.host_str() else {
+    return false;
+  };
+  host_matches(host, "accountscenter.meta.com")
+    || host_matches(host, "accountscenter.facebook.com")
+}
+
+#[cfg(test)]
+mod tests {
+  use super::{is_muse_account_center_url, MUSE_ACCOUNT_CENTER_URL};
+  use url::Url;
+
+  #[test]
+  fn recognizes_meta_and_facebook_account_center_hosts() {
+    assert!(is_muse_account_center_url(
+      &Url::parse(MUSE_ACCOUNT_CENTER_URL).unwrap()
+    ));
+    assert!(is_muse_account_center_url(
+      &Url::parse("https://www.accountscenter.meta.com/settings").unwrap()
+    ));
+    assert!(is_muse_account_center_url(
+      &Url::parse("https://accountscenter.facebook.com/").unwrap()
+    ));
+  }
+
+  #[test]
+  fn rejects_unrelated_and_spoofed_account_center_hosts() {
+    assert!(!is_muse_account_center_url(
+      &Url::parse("https://muse.ai/").unwrap()
+    ));
+    assert!(!is_muse_account_center_url(
+      &Url::parse("https://accountscenter.meta.com.example.org/").unwrap()
+    ));
+    assert!(!is_muse_account_center_url(
+      &Url::parse("http://accountscenter.meta.com/").unwrap()
+    ));
+  }
 }

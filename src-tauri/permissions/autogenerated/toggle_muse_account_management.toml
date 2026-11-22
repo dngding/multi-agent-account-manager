@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-toggle-muse-account-management"
+description = "Enables the toggle_muse_account_management command without any pre-configured scope."
+commands.allow = ["toggle_muse_account_management"]
+
+[[permission]]
+identifier = "deny-toggle-muse-account-management"
+description = "Denies the toggle_muse_account_management command without any pre-configured scope."
+commands.deny = ["toggle_muse_account_management"]
