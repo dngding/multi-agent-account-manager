@@ -10,6 +10,8 @@ import type {
   ProviderInfo,
   ProxyPoolBinding,
   ProxyPoolEntry,
+  ProxyPoolHealthEntry,
+  ProxyPoolHealthSnapshot,
   ProxyPoolSnapshot,
   QuotaDetail,
   UpdateCheckResult,
@@ -55,6 +57,12 @@ interface ProxyPickerState {
   sourceSettingsOpen: boolean;
   selectionWarning: string | null;
   requestSeq: number;
+  health: Map<string, ProxyPoolHealthEntry>;
+  healthLoading: boolean;
+  healthError: string | null;
+  healthCheckedAtMs: number | null;
+  healthSeq: number;
+  healthRevision: string | null;
 }
 
 let proxyPicker: ProxyPickerState | null = null;
@@ -85,17 +93,45 @@ function normalizedProxyEndpoint(value: string): string {
   }
 }
 
+function proxyPickerProviderId(): ProviderId | null {
+  if (modal.kind === "add") return modal.providerId;
+  if (modal.kind === "proxy") return modal.account.providerId;
+  return null;
+}
+
+function proxyHealthLabel(health: ProxyPoolHealthEntry | undefined, probing: boolean): string {
+  if (health?.available) return `可用 · ${health.latencyMs} ms`;
+  if (health) return "握手失败";
+  return probing ? "待检测" : "未检测";
+}
+
 function proxyPoolOptions(picker: ProxyPickerState): string {
   const query = picker.search.trim().toLocaleLowerCase();
   const entries = picker.pool?.error ? [] : picker.pool?.entries ?? [];
-  const options = entries.filter((entry) =>
-    entry.id === picker.selected?.entryId || `${entry.label} ${entry.proxyUrl}`.toLocaleLowerCase().includes(query)
-  );
+  const options = entries
+    .filter((entry) =>
+      entry.id === picker.selected?.entryId || `${entry.label} ${entry.proxyUrl}`.toLocaleLowerCase().includes(query)
+    )
+    .map((entry, index) => ({
+      entry,
+      index,
+      health: picker.health.get(entry.id),
+    }))
+    .sort((left, right) => {
+      const leftRank = left.health?.available ? 0 : left.health ? 2 : 1;
+      const rightRank = right.health?.available ? 0 : right.health ? 2 : 1;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      if (left.health?.available && right.health?.available) {
+        return left.health.latencyMs - right.health.latencyMs || left.index - right.index;
+      }
+      return left.index - right.index;
+    });
   return `<option value="">请选择一个代理，不会自动分配</option>${options.map((entry) => {
-    const users = proxyEntryUsers(entry);
+    const users = proxyEntryUsers(entry.entry);
     const usage = users.length ? ` · 本应用 ${users.length} 号已用` : "";
-    const duplicate = entry.duplicateCount > 1 ? ` · 同目标 ${entry.duplicateCount} 入口` : "";
-    return `<option value="${escapeHtml(entry.id)}"${entry.id === picker.selected?.entryId ? " selected" : ""}>${escapeHtml(`${entry.label} · ${entry.proxyUrl}${usage}${duplicate}`)}</option>`;
+    const duplicate = entry.entry.duplicateCount > 1 ? ` · 同目标 ${entry.entry.duplicateCount} 入口` : "";
+    const availability = proxyHealthLabel(entry.health, picker.healthLoading);
+    return `<option value="${escapeHtml(entry.entry.id)}"${entry.entry.id === picker.selected?.entryId ? " selected" : ""}>${escapeHtml(`${availability} · ${entry.entry.label} · ${entry.entry.proxyUrl}${usage}${duplicate}`)}</option>`;
   }).join("")}`;
 }
 
@@ -104,8 +140,23 @@ function proxyPoolStatus(picker: ProxyPickerState): string {
   if (picker.pool?.error) return picker.pool.error;
   if (!picker.pool?.sourcePath) return "未找到代理池，请在“代理池来源”中选择或填写现有本地 YAML 文件。";
   if (!picker.pool.entries.length) return "此来源没有可选的固定代理入口。可更换来源或使用手动地址。";
-  const checked = new Date(picker.pool.checkedAtMs).toLocaleTimeString("zh-CN", { hour12: false });
-  return `${picker.pool.entries.length} 个入口 · ${checked} 已同步；打开期间每 10 秒检查更新`;
+  const available = picker.pool.entries.filter((entry) => picker.health.get(entry.id)?.available).length;
+  const failed = picker.pool.entries.filter((entry) => {
+    const health = picker.health.get(entry.id);
+    return health && !health.available;
+  }).length;
+  const unchecked = picker.pool.entries.length - available - failed;
+  if (picker.healthError) return `${picker.pool.entries.length} 个入口；可用性检测失败：${picker.healthError}`;
+  if (picker.healthLoading) {
+    if (available || failed) {
+      return `可用 ${available} · 握手失败 ${failed} · 待复检 ${unchecked}；可用入口会排在前面`;
+    }
+    return `${picker.pool.entries.length} 个入口 · 正在检测代理可用性，完成后可用入口会自动排在前面`;
+  }
+  const checked = picker.healthCheckedAtMs
+    ? new Date(picker.healthCheckedAtMs).toLocaleTimeString("zh-CN", { hour12: false })
+    : new Date(picker.pool.checkedAtMs).toLocaleTimeString("zh-CN", { hour12: false });
+  return `可用 ${available} · 握手失败 ${failed} · 未检测 ${unchecked} · ${checked} 检测；可用入口已置顶`;
 }
 
 function proxyPoolSelectedDetail(picker: ProxyPickerState): string {
@@ -114,6 +165,9 @@ function proxyPoolSelectedDetail(picker: ProxyPickerState): string {
   if (!entry) return "选择后固定绑定此入口；代理池更新不会自动改选其他入口。";
   const users = proxyEntryUsers(entry);
   const parts = [users.length ? `本应用已用：${users.map((account) => account.alias).join("、")}` : "本应用暂无其他账号使用此端口或目标"];
+  const health = picker.health.get(entry.id);
+  if (health?.available) parts.push(`代理握手可用，延迟 ${health.latencyMs} ms`);
+  if (health && !health.available) parts.push("当前代理握手失败，打开账号前还会重新检查");
   if (entry.duplicateCount > 1) parts.push(`同一目标共有 ${entry.duplicateCount} 个入口`);
   return parts.join("；");
 }
@@ -132,7 +186,7 @@ function renderProxyPicker(manualId: string, manualDraft: string): string {
         <label class="modal-field-label" for="proxy-pool-search">搜索代理</label>
         <div class="proxy-pool-toolbar">
           <input id="proxy-pool-search" class="modal-input" placeholder="名称或端口" value="${escapeHtml(picker.search)}" />
-          <button id="proxy-pool-refresh" class="btn" type="button"${picker.loading ? " disabled" : ""}>刷新</button>
+          <button id="proxy-pool-refresh" class="btn" type="button"${picker.loading || picker.healthLoading ? " disabled" : ""}>刷新</button>
         </div>
         <label class="modal-field-label" for="proxy-pool-select">选择固定入口</label>
         <select id="proxy-pool-select" class="modal-input proxy-pool-select"${(!picker.pool && picker.loading) || picker.pool?.error ? " disabled" : ""}>${proxyPoolOptions(picker)}</select>
@@ -153,7 +207,7 @@ function renderProxyPicker(manualId: string, manualDraft: string): string {
             <button id="proxy-pool-source-auto" class="btn" type="button"${picker.loading ? " disabled" : ""}>自动发现</button>
           </div>
         </details>
-        <div class="modal-desc">只读取现有池，不修改或重启代理服务。标记仅统计本应用，Telegram 占用未知；同目标标识不代表公网 IP。</div>
+        <div class="modal-desc">可用性通过当前服务的 HTTPS 代理握手检测，可用入口按延迟排在前面。只读取现有池，不修改或重启代理服务；同目标标识不代表公网 IP。</div>
       </div>
     ` : `
       <label class="modal-field-label" for="${manualId}">HTTP / SOCKS5 地址</label>
@@ -202,7 +256,7 @@ function refreshProxyPickerDom(): void {
   }
   for (const id of ["proxy-pool-refresh", "proxy-pool-source-apply", "proxy-pool-source-auto"]) {
     const button = document.querySelector<HTMLButtonElement>(`#${id}`);
-    if (button) button.disabled = picker.loading;
+    if (button) button.disabled = picker.loading || (id === "proxy-pool-refresh" && picker.healthLoading);
   }
   const primary = document.querySelector<HTMLButtonElement>("#modal-confirm-btn");
   const saveOnly = document.querySelector<HTMLButtonElement>("#modal-save-only-btn");
@@ -210,7 +264,51 @@ function refreshProxyPickerDom(): void {
   if (saveOnly) saveOnly.disabled = picker.loading || Boolean(picker.selectionWarning);
 }
 
-async function refreshProxyPool(sourcePath?: string): Promise<void> {
+async function probeProxyHealth(
+  picker: ProxyPickerState,
+  revision: string,
+  providerId: ProviderId,
+  force: boolean,
+): Promise<void> {
+  if (proxyPicker !== picker || picker.pool?.revision !== revision) return;
+  if (!force && picker.healthLoading && picker.healthRevision === revision) return;
+  const healthSeq = ++picker.healthSeq;
+  picker.healthRevision = revision;
+  picker.healthLoading = true;
+  picker.healthError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyPoolHealthSnapshot>("probe_proxy_pool", {
+      providerId,
+      force,
+    });
+    if (
+      proxyPicker !== picker ||
+      healthSeq !== picker.healthSeq ||
+      !hasProxyPicker() ||
+      picker.pool?.revision !== result.revision
+    ) {
+      return;
+    }
+    const currentIds = new Set(picker.pool.entries.map((entry) => entry.id));
+    picker.health = new Map(
+      result.entries
+        .filter((entry) => currentIds.has(entry.entryId))
+        .map((entry) => [entry.entryId, entry]),
+    );
+    picker.healthCheckedAtMs = result.checkedAtMs;
+  } catch (error) {
+    if (proxyPicker !== picker || healthSeq !== picker.healthSeq || !hasProxyPicker()) return;
+    picker.healthError = String(error);
+  } finally {
+    if (proxyPicker === picker && healthSeq === picker.healthSeq) {
+      picker.healthLoading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+async function refreshProxyPool(sourcePath?: string, forceHealth = false): Promise<void> {
   const picker = proxyPicker;
   if (!picker || !hasProxyPicker()) return;
   const requestSeq = ++picker.requestSeq;
@@ -222,7 +320,16 @@ async function refreshProxyPool(sourcePath?: string): Promise<void> {
       ? await invoke<ProxyPoolSnapshot>("get_proxy_pool")
       : await invoke<ProxyPoolSnapshot>("set_proxy_pool_source", { sourcePath });
     if (proxyPicker !== picker || requestSeq !== picker.requestSeq || !hasProxyPicker()) return;
+    const revisionChanged = picker.pool?.revision !== result.revision;
     picker.pool = { ...result, entries: result.error ? [] : result.entries };
+    if (revisionChanged) {
+      picker.healthSeq += 1;
+      picker.health = new Map();
+      picker.healthLoading = false;
+      picker.healthError = null;
+      picker.healthCheckedAtMs = null;
+      picker.healthRevision = null;
+    }
     if (!picker.sourceTouched || (sourcePath !== undefined && picker.sourceDraft === submittedSourceDraft)) {
       picker.sourceDraft = result.sourcePath ?? "";
       picker.sourceTouched = false;
@@ -236,10 +343,20 @@ async function refreshProxyPool(sourcePath?: string): Promise<void> {
         picker.selected = { ...picker.selected, label: entry.label };
       }
     }
+    const providerId = proxyPickerProviderId();
+    if (providerId && !result.error && picker.pool.entries.length) {
+      void probeProxyHealth(picker, result.revision, providerId, forceHealth);
+    }
   } catch (error) {
     if (proxyPicker !== picker || requestSeq !== picker.requestSeq) return;
     if (picker.selected) picker.selectionWarning = "读取失败，原选择已失效；请刷新成功后重新选择。";
     picker.selected = null;
+    picker.healthSeq += 1;
+    picker.health = new Map();
+    picker.healthLoading = false;
+    picker.healthError = null;
+    picker.healthCheckedAtMs = null;
+    picker.healthRevision = null;
     picker.pool = {
       sourcePath: picker.pool?.sourcePath ?? null,
       discoveredSources: picker.pool?.discoveredSources ?? [],
@@ -694,6 +811,8 @@ async function setModal(next: ModalMode): Promise<void> {
       pool: null, selected: binding ? { ...binding } : null, loading: true,
       search: "", sourceDraft: binding?.sourcePath ?? "", sourceTouched: false,
       sourceSettingsOpen: false, selectionWarning: null, requestSeq: 0,
+      health: new Map(), healthLoading: false, healthError: null,
+      healthCheckedAtMs: null, healthSeq: 0, healthRevision: null,
     };
   } else {
     proxyPicker = null;
@@ -1325,7 +1444,7 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
     document.querySelector(".modal-error")?.remove();
     refreshProxyPickerDom();
   });
-  document.querySelector("#proxy-pool-refresh")?.addEventListener("click", () => void refreshProxyPool());
+  document.querySelector("#proxy-pool-refresh")?.addEventListener("click", () => void refreshProxyPool(undefined, true));
   document.querySelector<HTMLDetailsElement>("#proxy-pool-source-settings")?.addEventListener("toggle", (event) => {
     if (proxyPicker) proxyPicker.sourceSettingsOpen = (event.currentTarget as HTMLDetailsElement).open;
   });

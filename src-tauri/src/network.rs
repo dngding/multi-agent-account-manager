@@ -38,6 +38,36 @@ pub fn parse_account_proxy(raw: &str) -> Result<Option<Url>, String> {
 
 #[cfg(windows)]
 pub async fn check_proxy_route(proxy_url: Url, target_url: Url) -> Result<(), String> {
+  check_proxy_route_with_timeouts(
+    proxy_url,
+    target_url,
+    Duration::from_secs(4),
+    Duration::from_secs(3),
+    Duration::from_secs(8),
+  )
+  .await
+}
+
+#[cfg(windows)]
+pub async fn check_proxy_route_fast(proxy_url: Url, target_url: Url) -> Result<(), String> {
+  check_proxy_route_with_timeouts(
+    proxy_url,
+    target_url,
+    Duration::from_secs(1),
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+  )
+  .await
+}
+
+#[cfg(windows)]
+async fn check_proxy_route_with_timeouts(
+  proxy_url: Url,
+  target_url: Url,
+  dns_timeout: Duration,
+  connect_timeout: Duration,
+  handshake_timeout: Duration,
+) -> Result<(), String> {
   let proxy_host = proxy_url
     .host_str()
     .ok_or_else(|| "代理地址缺少主机名".to_string())?
@@ -46,7 +76,7 @@ pub async fn check_proxy_route(proxy_url: Url, target_url: Url) -> Result<(), St
     .port()
     .ok_or_else(|| "代理地址缺少端口".to_string())?;
   let addresses = tokio::time::timeout(
-    Duration::from_secs(4),
+    dns_timeout,
     tokio::net::lookup_host((proxy_host.as_str(), proxy_port)),
   )
   .await
@@ -58,9 +88,17 @@ pub async fn check_proxy_route(proxy_url: Url, target_url: Url) -> Result<(), St
     return Err("无法解析代理服务器地址".to_string());
   }
 
-  tokio::task::spawn_blocking(move || check_proxy_route_sync(&addresses, &proxy_url, &target_url))
-    .await
-    .map_err(|_| "代理连通性检查任务异常结束".to_string())?
+  tokio::task::spawn_blocking(move || {
+    check_proxy_route_sync(
+      &addresses,
+      &proxy_url,
+      &target_url,
+      connect_timeout,
+      handshake_timeout,
+    )
+  })
+  .await
+  .map_err(|_| "代理连通性检查任务异常结束".to_string())?
 }
 
 #[cfg(windows)]
@@ -68,6 +106,8 @@ fn check_proxy_route_sync(
   addresses: &[std::net::SocketAddr],
   proxy_url: &Url,
   target_url: &Url,
+  connect_timeout: Duration,
+  handshake_timeout: Duration,
 ) -> Result<(), String> {
   let target_host = target_url
     .host_str()
@@ -76,7 +116,7 @@ fn check_proxy_route_sync(
     .port_or_known_default()
     .ok_or_else(|| "服务地址缺少端口".to_string())?;
 
-  let connect_deadline = Instant::now() + Duration::from_secs(3);
+  let connect_deadline = Instant::now() + connect_timeout;
   let mut stream = None;
   for address in addresses {
     let remaining = connect_deadline.saturating_duration_since(Instant::now());
@@ -90,7 +130,7 @@ fn check_proxy_route_sync(
   }
   let mut stream =
     stream.ok_or_else(|| "代理服务器当前无法连接，请检查地址、端口和网络".to_string())?;
-  let handshake_deadline = Instant::now() + Duration::from_secs(8);
+  let handshake_deadline = Instant::now() + handshake_timeout;
 
   match proxy_url.scheme() {
     "http" => check_http_proxy_tunnel(&mut stream, target_host, target_port, handshake_deadline),

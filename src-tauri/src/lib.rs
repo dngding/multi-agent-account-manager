@@ -9,6 +9,7 @@ mod storage;
 mod updater;
 
 use proxy_pool::{ProxyPool, ProxyPoolBinding, ProxyPoolSnapshot};
+use providers::ProviderId;
 use session_manager::{ManagerSnapshot, SessionManager, APP_TITLE};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};
@@ -36,6 +37,20 @@ async fn set_proxy_pool_source(
     return Err("本地代理池目前仅支持 Windows 桌面版".to_string());
   }
   pool.set_source(&source_path)
+}
+
+#[tauri::command]
+async fn probe_proxy_pool(
+  pool: State<'_, ProxyPool>,
+  provider_id: String,
+  force: Option<bool>,
+) -> Result<proxy_pool::ProxyPoolHealthSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("代理可用性检测目前仅支持 Windows 桌面版".to_string());
+  }
+  let provider_id =
+    ProviderId::parse(&provider_id).ok_or_else(|| "不支持的账号服务类型".to_string())?;
+  pool.probe_health(provider_id, force.unwrap_or(false)).await
 }
 
 #[tauri::command]
@@ -264,6 +279,7 @@ pub fn run() {
       get_manager_state,
       get_proxy_pool,
       set_proxy_pool_source,
+      probe_proxy_pool,
       select_provider,
       add_account,
       rename_account,

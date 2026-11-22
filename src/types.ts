@@ -70,6 +70,20 @@ export interface ProxyPoolSnapshot {
   error: string | null;
 }
 
+export interface ProxyPoolHealthEntry {
+  entryId: string;
+  available: boolean;
+  latencyMs: number;
+  message: string | null;
+}
+
+export interface ProxyPoolHealthSnapshot {
+  providerId: ProviderId;
+  revision: string;
+  checkedAtMs: number;
+  entries: ProxyPoolHealthEntry[];
+}
+
 export interface AccountNetworkState extends AccountKey {
   status: "pending" | "checking" | "ready" | "interrupted";
   message: string | null;

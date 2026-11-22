@@ -1,16 +1,20 @@
+use crate::providers::{get_provider, ProviderId};
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Number, Value};
 use sha2::{Digest, Sha256};
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsString;
 use std::fmt;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::sync::{Mutex, Semaphore};
+use tokio::task::JoinSet;
 use url::Url;
 
 const MAX_SOURCE_BYTES: usize = 4 * 1024 * 1024;
@@ -20,6 +24,9 @@ const MAX_YAML_DEPTH: usize = 48;
 const MAX_LISTENERS: usize = 4096;
 const SOURCE_STATE_FILE: &str = "proxy-pool-source.json";
 const SOURCE_OVERRIDE: &str = "DIEHAO_PROXY_POOL_FILE";
+const HEALTH_CACHE_TTL: Duration = Duration::from_secs(120);
+const HEALTH_CACHE_RETENTION: Duration = Duration::from_secs(600);
+const HEALTH_PROBE_CONCURRENCY: usize = 24;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -51,6 +58,30 @@ pub struct ProxyPoolSnapshot {
   pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyPoolHealthEntry {
+  pub entry_id: String,
+  pub available: bool,
+  pub latency_ms: u64,
+  pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxyPoolHealthSnapshot {
+  pub provider_id: ProviderId,
+  pub revision: String,
+  pub checked_at_ms: u64,
+  pub entries: Vec<ProxyPoolHealthEntry>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedProxyHealth {
+  checked_at: Instant,
+  result: ProxyPoolHealthEntry,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct SourceSelection {
@@ -61,11 +92,17 @@ struct SourceSelection {
 #[derive(Debug)]
 pub struct ProxyPool {
   data_dir: PathBuf,
+  health_cache: Mutex<HashMap<String, CachedProxyHealth>>,
+  probe_lock: Mutex<()>,
 }
 
 impl ProxyPool {
   pub fn new(data_dir: PathBuf) -> Self {
-    Self { data_dir }
+    Self {
+      data_dir,
+      health_cache: Mutex::new(HashMap::new()),
+      probe_lock: Mutex::new(()),
+    }
   }
 
   pub fn snapshot(&self) -> ProxyPoolSnapshot {
@@ -82,6 +119,126 @@ impl ProxyPool {
     }
     self.save_source(raw_path)?;
     Ok(self.snapshot())
+  }
+
+  pub async fn probe_health(
+    &self,
+    provider_id: ProviderId,
+    force: bool,
+  ) -> Result<ProxyPoolHealthSnapshot, String> {
+    #[cfg(not(windows))]
+    {
+      let _ = provider_id;
+      let _ = force;
+      return Err("代理可用性检测目前仅支持 Windows 桌面版".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+      let snapshot = self.snapshot();
+      if let Some(error) = snapshot.error {
+        return Err(error);
+      }
+      if snapshot.entries.is_empty() {
+        return Err("此来源没有可检测的固定代理入口".to_string());
+      }
+      let target_url = Url::parse(get_provider(provider_id).info.entry_url)
+        .map_err(|_| "服务入口地址错误，无法检测代理可用性".to_string())?;
+
+      // Serialize whole-pool passes. Concurrent UI refreshes then reuse the fresh cache.
+      let _probe_guard = self.probe_lock.lock().await;
+      let started_at = Instant::now();
+      let mut statuses = HashMap::new();
+      let mut pending = Vec::new();
+      {
+        let mut cache = self.health_cache.lock().await;
+        cache.retain(|_, item| {
+          started_at.saturating_duration_since(item.checked_at) < HEALTH_CACHE_RETENTION
+        });
+        for entry in &snapshot.entries {
+          let key = health_cache_key(provider_id, entry);
+          if !force {
+            if let Some(cached) = cache
+              .get(&key)
+              .filter(|item| started_at.saturating_duration_since(item.checked_at) < HEALTH_CACHE_TTL)
+            {
+              statuses.insert(entry.id.clone(), cached.result.clone());
+              continue;
+            }
+          }
+          pending.push((key, entry.clone()));
+        }
+      }
+
+      if !pending.is_empty() {
+        let semaphore = Arc::new(Semaphore::new(HEALTH_PROBE_CONCURRENCY));
+        let mut tasks = JoinSet::new();
+        let mut pending = pending.into_iter();
+        loop {
+          while tasks.len() < HEALTH_PROBE_CONCURRENCY {
+            let Some((key, entry)) = pending.next() else {
+              break;
+            };
+            let permit = Arc::clone(&semaphore)
+              .acquire_owned()
+              .await
+              .map_err(|_| "代理可用性检测调度失败".to_string())?;
+            let target_url = target_url.clone();
+            tasks.spawn(async move {
+              let _permit = permit;
+              let probe_started = Instant::now();
+              let result = async {
+                let proxy_url = Url::parse(&entry.proxy_url)
+                  .map_err(|_| "代理池入口地址格式错误".to_string())?;
+                crate::network::check_proxy_route_fast(proxy_url, target_url).await
+              }
+              .await;
+              let latency_ms =
+                probe_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+              (
+                key,
+                ProxyPoolHealthEntry {
+                  entry_id: entry.id,
+                  available: result.is_ok(),
+                  latency_ms,
+                  message: result.err(),
+                },
+              )
+            });
+          }
+
+          let Some(joined) = tasks.join_next().await else {
+            break;
+          };
+          let (key, result) =
+            joined.map_err(|_| "代理可用性检测任务异常结束".to_string())?;
+          statuses.insert(result.entry_id.clone(), result.clone());
+          self.health_cache
+            .lock()
+            .await
+            .insert(key, CachedProxyHealth {
+              checked_at: Instant::now(),
+              result,
+            });
+        }
+      }
+
+      let mut entries = snapshot
+        .entries
+        .iter()
+        .filter_map(|entry| statuses.get(&entry.id).cloned())
+        .collect::<Vec<_>>();
+      if entries.len() != snapshot.entries.len() {
+        return Err("部分代理入口未能完成可用性检测，请重试".to_string());
+      }
+      sort_health_entries(&mut entries);
+      Ok(ProxyPoolHealthSnapshot {
+        provider_id,
+        revision: snapshot.revision,
+        checked_at_ms: now_ms(),
+        entries,
+      })
+    }
   }
 
   fn save_source(&self, raw_path: &str) -> Result<(), String> {
@@ -180,6 +337,26 @@ impl ProxyPool {
     }
     normalized_source(Path::new(&selection.source_path)).map(Some)
   }
+}
+
+fn health_cache_key(provider_id: ProviderId, entry: &ProxyPoolEntry) -> String {
+  format!(
+    "{}|{}|{}|{}",
+    provider_id.as_str(),
+    entry.id,
+    entry.proxy_url,
+    entry.fingerprint
+  )
+}
+
+fn sort_health_entries(entries: &mut [ProxyPoolHealthEntry]) {
+  entries.sort_by(|left, right| {
+    right
+      .available
+      .cmp(&left.available)
+      .then_with(|| left.latency_ms.cmp(&right.latency_ms))
+      .then_with(|| left.entry_id.cmp(&right.entry_id))
+  });
 }
 
 /// Re-read the selected file before use. A cached picker result never authorizes routing.
@@ -857,6 +1034,38 @@ mod tests {
     let entries = parse_entries(yaml.as_bytes()).unwrap();
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].proxy_url, "socks5://127.0.0.1:18081/");
+  }
+
+  #[test]
+  fn orders_available_proxies_by_latency_before_unavailable_entries() {
+    let mut entries = vec![
+      ProxyPoolHealthEntry {
+        entry_id: "unavailable-fast".to_string(),
+        available: false,
+        latency_ms: 5,
+        message: Some("握手失败".to_string()),
+      },
+      ProxyPoolHealthEntry {
+        entry_id: "available-slow".to_string(),
+        available: true,
+        latency_ms: 80,
+        message: None,
+      },
+      ProxyPoolHealthEntry {
+        entry_id: "available-fast".to_string(),
+        available: true,
+        latency_ms: 20,
+        message: None,
+      },
+    ];
+    sort_health_entries(&mut entries);
+    assert_eq!(
+      entries
+        .iter()
+        .map(|entry| entry.entry_id.as_str())
+        .collect::<Vec<_>>(),
+      vec!["available-fast", "available-slow", "unavailable-fast"]
+    );
   }
 
   #[test]
