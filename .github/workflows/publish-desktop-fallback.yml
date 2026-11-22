@@ -1,0 +1,142 @@
+name: Publish desktop fallback
+
+on:
+  push:
+    branches: [codex/windows-account-proxy]
+    paths:
+      - .github/workflows/publish-desktop-fallback.yml
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    name: Publish verified desktop artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v0.2.0
+      SOURCE_RUN_ID: "45001895145"
+    steps:
+      - name: Download Windows installer
+        uses: actions/download-artifact@v7
+        with:
+          name: windows-x64-nsis
+          path: artifacts/windows
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: macos-universal-dmg
+          path: artifacts/macos
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ github.token }}
+
+      - name: Prepare and publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          windows_exe=$(find artifacts/windows -name '*-setup.exe' -type f | head -n 1)
+          mac_dmg=$(find artifacts/macos -name '*.dmg' -type f | head -n 1)
+          mac_tar=$(find artifacts/macos -name '*.app.tar.gz' -type f | head -n 1)
+
+          if [[ -z "$windows_exe" || -z "$mac_dmg" || -z "$mac_tar" ]]; then
+            echo "Missing verified desktop artifact" >&2
+            exit 1
+          fi
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            existing_assets=$(gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name')
+            all_present=true
+            for asset in \
+              account-manager-windows-x64-setup.exe \
+              account-manager-macos-universal.dmg \
+              account-manager-macos-universal.app.tar.gz \
+              latest.json; do
+              grep -qx "$asset" <<<"$existing_assets" || all_present=false
+            done
+            if [[ "$all_present" == true ]]; then
+              echo "Desktop release assets already exist"
+              exit 0
+            fi
+          fi
+
+          publish_dir="$RUNNER_TEMP/publish"
+          mkdir -p "$publish_dir"
+
+          cp "$windows_exe" "$publish_dir/account-manager-windows-x64-setup.exe"
+          cp "$mac_dmg" "$publish_dir/account-manager-macos-universal.dmg"
+          cp "$mac_tar" "$publish_dir/account-manager-macos-universal.app.tar.gz"
+
+          win_sha=$(sha256sum "$publish_dir/account-manager-windows-x64-setup.exe" | awk '{print $1}')
+          win_size=$(stat -c%s "$publish_dir/account-manager-windows-x64-setup.exe")
+          mac_dmg_sha=$(sha256sum "$publish_dir/account-manager-macos-universal.dmg" | awk '{print $1}')
+          mac_dmg_size=$(stat -c%s "$publish_dir/account-manager-macos-universal.dmg")
+          mac_tar_sha=$(sha256sum "$publish_dir/account-manager-macos-universal.app.tar.gz" | awk '{print $1}')
+          mac_tar_size=$(stat -c%s "$publish_dir/account-manager-macos-universal.app.tar.gz")
+          pub_date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          base_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+          notes=$(printf '%s\n' \
+            '- Add cross-platform account cookie copy.' \
+            '- Keep existing proxy pool, health checks, and account isolation.')
+
+          jq -n \
+            --arg version "0.2.0" \
+            --arg notes "$notes" \
+            --arg pub_date "$pub_date" \
+            --arg release_page_url "https://github.com/${GITHUB_REPOSITORY}/releases/tag/${RELEASE_TAG}" \
+            --arg mac_url "${base_url}/account-manager-macos-universal.app.tar.gz" \
+            --arg mac_sha "$mac_tar_sha" \
+            --argjson mac_size "$mac_tar_size" \
+            --arg win_url "${base_url}/account-manager-windows-x64-setup.exe" \
+            --arg win_sha "$win_sha" \
+            --argjson win_size "$win_size" \
+            '{
+              version: $version,
+              notes: $notes,
+              pub_date: $pub_date,
+              release_page_url: $release_page_url,
+              platforms: {
+                macos: {
+                  url: $mac_url,
+                  sha256: $mac_sha,
+                  filename: "account-manager-macos-universal.app.tar.gz",
+                  size: $mac_size
+                },
+                windows: {
+                  url: $win_url,
+                  sha256: $win_sha,
+                  filename: "account-manager-windows-x64-setup.exe",
+                  size: $win_size
+                }
+              }
+            }' > "$publish_dir/latest.json"
+
+          printf '%s\n' \
+            "- Add cross-platform account cookie copy." \
+            "- Keep existing proxy pool, health checks, and account isolation." \
+            > "$publish_dir/release-notes.txt"
+
+          files=(
+            "$publish_dir/account-manager-macos-universal.app.tar.gz"
+            "$publish_dir/account-manager-macos-universal.dmg"
+            "$publish_dir/account-manager-windows-x64-setup.exe"
+            "$publish_dir/latest.json"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "叠号 $RELEASE_TAG" \
+              --notes-file "$publish_dir/release-notes.txt"
+          else
+            gh release create "$RELEASE_TAG" "${files[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "叠号 $RELEASE_TAG" \
+              --notes-file "$publish_dir/release-notes.txt"
+          fi
