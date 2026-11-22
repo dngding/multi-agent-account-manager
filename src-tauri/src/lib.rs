@@ -298,3 +298,21 @@ pub fn run() {
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod capability_tests {
+  #[test]
+  fn proxy_pool_commands_are_allowed_for_manager_webview() {
+    let capability = include_str!("../capabilities/manager.json");
+    for permission in [
+      "allow-get-proxy-pool",
+      "allow-set-proxy-pool-source",
+      "allow-probe-proxy-pool",
+    ] {
+      assert!(
+        capability.contains(&format!("\"{permission}\"")),
+        "manager capability must allow {permission}"
+      );
+    }
+  }
+}

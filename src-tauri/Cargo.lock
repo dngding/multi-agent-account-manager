@@ -2024,7 +2024,7 @@ dependencies = [
 
 [[package]]
 name = "multi-agent-account-manager"
-version = "0.1.8"
+version = "0.1.9"
 dependencies = [
  "block2",
  "objc2",
