@@ -383,7 +383,10 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<ProxyPoolEntry>, String> {
       reserved.insert(name.to_string());
     }
   }
-  if let Some(providers) = root.get("proxy-providers") {
+  if let Some(providers) = root
+    .get("proxy-providers")
+    .filter(|providers| !providers.is_null())
+  {
     let providers = providers
       .as_object()
       .ok_or_else(|| "代理池 provider 配置结构无效".to_string())?;
@@ -843,6 +846,17 @@ mod tests {
     let serialized = serde_json::to_string(&entries).unwrap();
     assert!(!serialized.contains("synthetic-test-secret"));
     assert!(!serialized.contains("example.invalid"));
+  }
+
+  #[test]
+  fn accepts_an_explicitly_empty_proxy_providers_field() {
+    let yaml = format!(
+      "proxies:\n  - {NODE}\nproxy-providers:\nlisteners:\n{}",
+      one_listener()
+    );
+    let entries = parse_entries(yaml.as_bytes()).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].proxy_url, "socks5://127.0.0.1:18081/");
   }
 
   #[test]
