@@ -53,6 +53,14 @@ jobs:
           } else {
             rustfmt --check --edition 2021 --config-path rustfmt.toml --config skip_children=true $files
           }
+      - name: Generate Cargo lock
+        run: cargo generate-lockfile --manifest-path src-tauri/Cargo.toml
+      - name: Upload generated Cargo lock
+        uses: actions/upload-artifact@v7
+        with:
+          name: generated-cargo-lock
+          path: src-tauri/Cargo.lock
+          if-no-files-found: error
       - name: Run Windows Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc
       - name: Build Windows installer
