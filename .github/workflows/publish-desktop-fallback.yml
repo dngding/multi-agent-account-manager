@@ -136,7 +136,7 @@ jobs:
               --notes-file "$publish_dir/release-notes.txt"
           else
             gh release create "$RELEASE_TAG" "${files[@]}" \
-              --target "$GITHUB_SHA" \
+              --verify-tag \
               --title "叠号 $RELEASE_TAG" \
               --notes-file "$publish_dir/release-notes.txt"
           fi
