@@ -17,6 +17,7 @@ jobs:
     timeout-minutes: 15
     env:
       GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
       RELEASE_TAG: v0.2.0
       SOURCE_RUN_ID: "45001895145"
     steps:
@@ -130,13 +131,45 @@ jobs:
           )
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" "${files[@]}" --clobber
-            gh release edit "$RELEASE_TAG" \
+            release_log="$RUNNER_TEMP/release.error.log"
+            if ! gh release upload "$RELEASE_TAG" "${files[@]}" --clobber \
+              >"$release_log" 2>&1; then
+              {
+                echo "### Release upload failed"
+                echo '```text'
+                tail -n 80 "$release_log"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              cat "$release_log" >&2
+              exit 1
+            fi
+            if ! gh release edit "$RELEASE_TAG" \
               --title "叠号 $RELEASE_TAG" \
-              --notes-file "$publish_dir/release-notes.txt"
+              --notes-file "$publish_dir/release-notes.txt" \
+              >"$release_log" 2>&1; then
+              {
+                echo "### Release metadata update failed"
+                echo '```text'
+                tail -n 80 "$release_log"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              cat "$release_log" >&2
+              exit 1
+            fi
           else
-            gh release create "$RELEASE_TAG" "${files[@]}" \
+            release_log="$RUNNER_TEMP/release.error.log"
+            if ! gh release create "$RELEASE_TAG" "${files[@]}" \
               --verify-tag \
               --title "叠号 $RELEASE_TAG" \
-              --notes-file "$publish_dir/release-notes.txt"
+              --notes-file "$publish_dir/release-notes.txt" \
+              >"$release_log" 2>&1; then
+              {
+                echo "### Release create failed"
+                echo '```text'
+                tail -n 80 "$release_log"
+                echo '```'
+              } >> "$GITHUB_STEP_SUMMARY"
+              cat "$release_log" >&2
+              exit 1
+            fi
           fi
