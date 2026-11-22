@@ -26,7 +26,7 @@ const SOURCE_STATE_FILE: &str = "proxy-pool-source.json";
 const SOURCE_OVERRIDE: &str = "DIEHAO_PROXY_POOL_FILE";
 const HEALTH_CACHE_TTL: Duration = Duration::from_secs(120);
 const HEALTH_CACHE_RETENTION: Duration = Duration::from_secs(600);
-const HEALTH_PROBE_CONCURRENCY: usize = 24;
+const HEALTH_PROBE_CONCURRENCY: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -202,25 +202,27 @@ impl ProxyPool {
                   );
                 }
               };
-              let page_result =
-                crate::network::check_proxy_http_route_fast(proxy_url.clone(), target_url.clone())
-                  .await;
-              let (available, handshake_only, message) = match page_result {
-                Ok(()) => (true, false, None),
-                Err(page_error) => {
-                  let handshake_result =
-                    crate::network::check_proxy_route_fast(proxy_url, target_url).await;
-                  match handshake_result {
-                    Ok(()) => (false, true, Some(format!("页面请求失败：{page_error}"))),
-                    Err(handshake_error) => (
-                      false,
-                      false,
-                      Some(format!(
-                        "页面请求失败：{page_error}；代理握手失败：{handshake_error}"
-                      )),
-                    ),
-                  }
+              let (page_result, handshake_result) = tokio::join!(
+                crate::network::check_proxy_http_route_fast(proxy_url.clone(), target_url.clone()),
+                crate::network::check_proxy_route_fast(proxy_url, target_url)
+              );
+              let (available, handshake_only, message) = match (page_result, handshake_result) {
+                (Ok(()), Ok(())) => (true, false, None),
+                (Err(page_error), Ok(())) => {
+                  (false, true, Some(format!("页面请求失败：{page_error}")))
                 }
+                (Ok(()), Err(handshake_error)) => (
+                  false,
+                  false,
+                  Some(format!("页面请求可用，但 443 代理握手失败：{handshake_error}")),
+                ),
+                (Err(page_error), Err(handshake_error)) => (
+                  false,
+                  false,
+                  Some(format!(
+                    "页面请求失败：{page_error}；代理握手失败：{handshake_error}"
+                  )),
+                ),
               };
               let latency_ms = probe_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
               (
