@@ -2,6 +2,8 @@ node_modules
 .npm-cache/
 dist
 dist-ssr
+artifacts/
+.workbuddy/
 *.local
 .DS_Store
 src-tauri/target
