@@ -202,22 +202,16 @@ impl ProxyPool {
                   );
                 }
               };
-              let page_result = crate::network::check_proxy_http_route_fast(
-                proxy_url.clone(),
-                target_url.clone(),
-              )
-              .await;
+              let page_result =
+                crate::network::check_proxy_http_route_fast(proxy_url.clone(), target_url.clone())
+                  .await;
               let (available, handshake_only, message) = match page_result {
                 Ok(()) => (true, false, None),
                 Err(page_error) => {
                   let handshake_result =
                     crate::network::check_proxy_route_fast(proxy_url, target_url).await;
                   match handshake_result {
-                    Ok(()) => (
-                      false,
-                      true,
-                      Some(format!("页面请求失败：{page_error}")),
-                    ),
+                    Ok(()) => (false, true, Some(format!("页面请求失败：{page_error}"))),
                     Err(handshake_error) => (
                       false,
                       false,

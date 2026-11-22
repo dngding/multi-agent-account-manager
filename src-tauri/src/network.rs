@@ -62,8 +62,7 @@ pub async fn check_proxy_route_fast(proxy_url: Url, target_url: Url) -> Result<(
 
 #[cfg(windows)]
 pub async fn check_proxy_http_route_fast(proxy_url: Url, target_url: Url) -> Result<(), String> {
-  let addresses =
-    resolve_proxy_addresses(&proxy_url, Duration::from_secs(1)).await?;
+  let addresses = resolve_proxy_addresses(&proxy_url, Duration::from_secs(1)).await?;
   tokio::task::spawn_blocking(move || {
     check_proxy_http_route_sync(
       &addresses,
