@@ -158,10 +158,9 @@ impl ProxyPool {
         for entry in &snapshot.entries {
           let key = health_cache_key(provider_id, entry);
           if !force {
-            if let Some(cached) = cache
-              .get(&key)
-              .filter(|item| started_at.saturating_duration_since(item.checked_at) < HEALTH_CACHE_TTL)
-            {
+            if let Some(cached) = cache.get(&key).filter(|item| {
+              started_at.saturating_duration_since(item.checked_at) < HEALTH_CACHE_TTL
+            }) {
               statuses.insert(entry.id.clone(), cached.result.clone());
               continue;
             }
@@ -188,13 +187,12 @@ impl ProxyPool {
               let _permit = permit;
               let probe_started = Instant::now();
               let result = async {
-                let proxy_url = Url::parse(&entry.proxy_url)
-                  .map_err(|_| "代理池入口地址格式错误".to_string())?;
+                let proxy_url =
+                  Url::parse(&entry.proxy_url).map_err(|_| "代理池入口地址格式错误".to_string())?;
                 crate::network::check_proxy_route_fast(proxy_url, target_url).await
               }
               .await;
-              let latency_ms =
-                probe_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
+              let latency_ms = probe_started.elapsed().as_millis().min(u64::MAX as u128) as u64;
               (
                 key,
                 ProxyPoolHealthEntry {
@@ -210,16 +208,15 @@ impl ProxyPool {
           let Some(joined) = tasks.join_next().await else {
             break;
           };
-          let (key, result) =
-            joined.map_err(|_| "代理可用性检测任务异常结束".to_string())?;
+          let (key, result) = joined.map_err(|_| "代理可用性检测任务异常结束".to_string())?;
           statuses.insert(result.entry_id.clone(), result.clone());
-          self.health_cache
-            .lock()
-            .await
-            .insert(key, CachedProxyHealth {
+          self.health_cache.lock().await.insert(
+            key,
+            CachedProxyHealth {
               checked_at: Instant::now(),
               result,
-            });
+            },
+          );
         }
       }
 

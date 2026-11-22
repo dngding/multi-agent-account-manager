@@ -8,8 +8,8 @@ mod session_manager;
 mod storage;
 mod updater;
 
-use proxy_pool::{ProxyPool, ProxyPoolBinding, ProxyPoolSnapshot};
 use providers::ProviderId;
+use proxy_pool::{ProxyPool, ProxyPoolBinding, ProxyPoolSnapshot};
 use session_manager::{ManagerSnapshot, SessionManager, APP_TITLE};
 use std::sync::Arc;
 use tauri::{AppHandle, Manager, State};

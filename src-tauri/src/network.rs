@@ -412,6 +412,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use std::time::Duration;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -433,7 +434,14 @@ mod tests {
 
     let proxy_url = Url::parse(&format!("http://{address}")).unwrap();
     let target_url = Url::parse("https://muse.ai/").unwrap();
-    assert!(check_proxy_route_sync(&[address], &proxy_url, &target_url).is_ok());
+    assert!(check_proxy_route_sync(
+      &[address],
+      &proxy_url,
+      &target_url,
+      Duration::from_secs(2),
+      Duration::from_secs(2),
+    )
+    .is_ok());
     proxy.join().unwrap();
   }
 
@@ -444,6 +452,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use std::time::Duration;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -463,7 +472,14 @@ mod tests {
 
     let proxy_url = Url::parse(&format!("http://{address}")).unwrap();
     let target_url = Url::parse("https://muse.ai/").unwrap();
-    assert!(check_proxy_route_sync(&[address], &proxy_url, &target_url).is_err());
+    assert!(check_proxy_route_sync(
+      &[address],
+      &proxy_url,
+      &target_url,
+      Duration::from_secs(2),
+      Duration::from_secs(2),
+    )
+    .is_err());
     proxy.join().unwrap();
   }
 
@@ -474,6 +490,7 @@ mod tests {
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
+    use std::time::Duration;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -498,7 +515,14 @@ mod tests {
 
     let proxy_url = Url::parse(&format!("socks5://{address}")).unwrap();
     let target_url = Url::parse("https://muse.ai/").unwrap();
-    assert!(check_proxy_route_sync(&[address], &proxy_url, &target_url).is_ok());
+    assert!(check_proxy_route_sync(
+      &[address],
+      &proxy_url,
+      &target_url,
+      Duration::from_secs(2),
+      Duration::from_secs(2),
+    )
+    .is_ok());
     proxy.join().unwrap();
   }
 }
