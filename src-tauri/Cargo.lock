@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "multi-agent-account-manager"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "arboard",
  "block2",

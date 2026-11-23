@@ -27,6 +27,7 @@ const SOURCE_OVERRIDE: &str = "DIEHAO_PROXY_POOL_FILE";
 const HEALTH_CACHE_TTL: Duration = Duration::from_secs(120);
 const HEALTH_CACHE_RETENTION: Duration = Duration::from_secs(600);
 const HEALTH_PROBE_CONCURRENCY: usize = 16;
+const MAX_STATIC_PROXY_CHAIN: usize = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -653,7 +654,7 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<ProxyPoolEntry>, String> {
     ) {
       continue;
     }
-    let Some(node) = nodes.get(target).copied().filter(|node| static_node(node)) else {
+    let Some(chain) = static_node_chain(&nodes, target) else {
       continue;
     };
     let Ok(proxy_url) = normalize_endpoint(&format!("{scheme}://{host}:{port}")) else {
@@ -670,7 +671,7 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<ProxyPoolEntry>, String> {
       id: format!("{scheme}:{port}"),
       label,
       proxy_url,
-      fingerprint: fingerprint(node),
+      fingerprint: fingerprint_chain(&chain),
       duplicate_count: 1,
     };
     *target_counts.entry(target.to_string()).or_default() += 1;
@@ -678,7 +679,8 @@ fn parse_entries(bytes: &[u8]) -> Result<Vec<ProxyPoolEntry>, String> {
   }
   if candidates.is_empty() {
     return Err(
-      "未找到可用候选：仅支持无认证、本机监听并直指静态节点的 HTTP/SOCKS 入口".to_string(),
+      "未找到可用候选：仅支持无认证、本机监听并直指静态节点（含静态 dialer-proxy 链）的 HTTP/SOCKS 入口"
+        .to_string(),
     );
   }
   let mut entries = candidates
@@ -715,7 +717,33 @@ fn port_number(value: Option<&Value>) -> Option<u16> {
     .map(|port| port as u16)
 }
 
-fn static_node(node: &Value) -> bool {
+fn static_node_chain<'a>(
+  nodes: &BTreeMap<&'a str, &'a Value>,
+  target: &str,
+) -> Option<Vec<&'a Value>> {
+  let mut current = target;
+  let mut seen = BTreeSet::new();
+  let mut chain = Vec::new();
+
+  for _ in 0..MAX_STATIC_PROXY_CHAIN {
+    if !seen.insert(current.to_string()) {
+      return None;
+    }
+    let node = nodes.get(current).copied()?;
+    if !static_node_definition(node) {
+      return None;
+    }
+    chain.push(node);
+    match node.get("dialer-proxy") {
+      None | Some(Value::Null) => return Some(chain),
+      Some(Value::String(next)) if !next.trim().is_empty() => current = next,
+      _ => return None,
+    }
+  }
+  None
+}
+
+fn static_node_definition(node: &Value) -> bool {
   let Some(node) = node.as_object() else {
     return false;
   };
@@ -744,7 +772,6 @@ fn static_node(node: &Value) -> bool {
     return false;
   }
   if [
-    "dialer-proxy",
     "proxy",
     "detour",
     "use",
@@ -847,6 +874,14 @@ fn safe_label(raw: &str, fallback: &str) -> String {
 }
 
 fn fingerprint(value: &Value) -> String {
+  fingerprint_values(std::slice::from_ref(&value))
+}
+
+fn fingerprint_chain(chain: &[&Value]) -> String {
+  fingerprint_values(chain)
+}
+
+fn fingerprint_values(values: &[&Value]) -> String {
   fn canonical(value: &Value, output: &mut Vec<u8>) {
     match value {
       Value::Array(values) => {
@@ -878,7 +913,15 @@ fn fingerprint(value: &Value) -> String {
     }
   }
   let mut bytes = Vec::new();
-  canonical(value, &mut bytes);
+  if values.len() == 1 {
+    canonical(values[0], &mut bytes);
+  } else {
+    bytes.extend_from_slice(b"static-proxy-chain-v1");
+    for value in values {
+      bytes.push(0);
+      canonical(value, &mut bytes);
+    }
+  }
   format!("{:x}", Sha256::digest(bytes))
 }
 
@@ -1065,6 +1108,34 @@ mod tests {
   }
 
   #[test]
+  fn imports_static_dialer_proxy_chains_and_tracks_each_hop() {
+    let yaml = format!(
+      "proxies:\n  - {{name: fixed-a, type: ss, server: target.example.invalid, port: 443, cipher: aes-128-gcm, password: target-secret, dialer-proxy: fixed-b}}\n  - {{name: fixed-b, type: ss, server: hop.example.invalid, port: 8443, cipher: aes-128-gcm, password: hop-secret}}\nlisteners:\n{}",
+      one_listener()
+    );
+    let entries = parse_entries(yaml.as_bytes()).unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].proxy_url, "socks5://127.0.0.1:18081/");
+    assert_eq!(entries[0].duplicate_count, 1);
+
+    let serialized = serde_json::to_string(&entries).unwrap();
+    assert!(!serialized.contains("target-secret"));
+    assert!(!serialized.contains("hop-secret"));
+    assert!(!serialized.contains("target.example.invalid"));
+    assert!(!serialized.contains("hop.example.invalid"));
+
+    let changed_hop = parse_entries(yaml.replace("hop-secret", "changed-hop-secret").as_bytes())
+      .unwrap()
+      .remove(0);
+    let changed_target =
+      parse_entries(yaml.replace("target-secret", "changed-target-secret").as_bytes())
+        .unwrap()
+        .remove(0);
+    assert_ne!(entries[0].fingerprint, changed_hop.fingerprint);
+    assert_ne!(entries[0].fingerprint, changed_target.fingerprint);
+  }
+
+  #[test]
   fn accepts_an_explicitly_empty_proxy_providers_field() {
     let yaml = format!(
       "proxies:\n  - {NODE}\nproxy-providers:\nlisteners:\n{}",
@@ -1135,7 +1206,7 @@ mod tests {
   }
 
   #[test]
-  fn filters_authenticated_remote_group_direct_unknown_and_chained_entries() {
+  fn filters_authenticated_remote_group_direct_unknown_and_dynamic_chain_entries() {
     for change in [
       ("listen: 0.0.0.0", "listen: 192.0.2.1"),
       ("proxy: fixed-a", "proxy: DIRECT"),
@@ -1165,6 +1236,9 @@ mod tests {
         .as_bytes()
     )
     .is_err());
+
+    let cyclic_chain = "proxies:\n  - {name: fixed-a, type: ss, server: a.example.invalid, port: 443, cipher: aes-128-gcm, password: one, dialer-proxy: fixed-b}\n  - {name: fixed-b, type: ss, server: b.example.invalid, port: 443, cipher: aes-128-gcm, password: two, dialer-proxy: fixed-a}\nlisteners:\n  - {name: local-a, type: socks, listen: 0.0.0.0, port: 18081, proxy: fixed-a}";
+    assert!(parse_entries(cyclic_chain.as_bytes()).is_err());
   }
 
   #[test]
