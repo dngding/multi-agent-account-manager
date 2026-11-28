@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-probe-proxy-gate-pool"
+description = "Enables the probe_proxy_gate_pool command without any pre-configured scope."
+commands.allow = ["probe_proxy_gate_pool"]
+
+[[permission]]
+identifier = "deny-probe-proxy-gate-pool"
+description = "Denies the probe_proxy_gate_pool command without any pre-configured scope."
+commands.deny = ["probe_proxy_gate_pool"]

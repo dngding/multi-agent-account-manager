@@ -3,12 +3,16 @@ mod app_paths;
 mod network;
 mod platform;
 mod providers;
+mod proxy_gate_adapter;
 mod proxy_pool;
 mod session_manager;
 mod storage;
 mod updater;
 
 use providers::ProviderId;
+use proxy_gate_adapter::{
+  ProxyGateAdapter, ProxyGateProbeSnapshot, ProxyGateSnapshot, ProxyGateStatus,
+};
 use proxy_pool::{ProxyPool, ProxyPoolBinding, ProxyPoolSnapshot};
 use session_manager::{ManagerSnapshot, SessionManager, APP_TITLE};
 use std::sync::Arc;
@@ -51,6 +55,148 @@ async fn probe_proxy_pool(
   let provider_id =
     ProviderId::parse(&provider_id).ok_or_else(|| "不支持的账号服务类型".to_string())?;
   pool.probe_health(provider_id, force.unwrap_or(false)).await
+}
+
+#[tauri::command]
+async fn get_proxy_gate_snapshot(
+  adapter: State<'_, ProxyGateAdapter>,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  Ok(adapter.snapshot())
+}
+
+#[tauri::command]
+async fn get_proxy_gate_status(
+  adapter: State<'_, ProxyGateAdapter>,
+) -> Result<Option<ProxyGateStatus>, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  adapter.status()
+}
+
+#[tauri::command]
+async fn probe_proxy_gate_pool(
+  adapter: State<'_, ProxyGateAdapter>,
+) -> Result<ProxyGateProbeSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  Ok(adapter.probe_pool())
+}
+
+#[tauri::command]
+async fn start_proxy_gate(
+  adapter: State<'_, ProxyGateAdapter>,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  adapter.start()?;
+  Ok(adapter.snapshot())
+}
+
+#[tauri::command]
+async fn stop_proxy_gate(
+  adapter: State<'_, ProxyGateAdapter>,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  adapter.stop()?;
+  Ok(adapter.snapshot())
+}
+
+#[tauri::command]
+async fn set_proxy_gate_pool_source(
+  adapter: State<'_, ProxyGateAdapter>,
+  source_path: String,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  adapter.set_pool_source(&source_path)?;
+  Ok(adapter.snapshot())
+}
+
+#[tauri::command]
+async fn assign_proxy_gate_account(
+  app: AppHandle,
+  mgr: State<'_, Arc<SessionManager>>,
+  adapter: State<'_, ProxyGateAdapter>,
+  provider_id: String,
+  uuid: String,
+  account_alias: Option<String>,
+  entry_id: String,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  #[cfg(windows)]
+  {
+    let assignment = adapter.assign(&provider_id, &uuid, &entry_id)?;
+    if let Err(error) = adapter.start() {
+      let _ = adapter.unassign(&provider_id, &uuid);
+      return Err(format!("Proxy Gate 启动失败，已回滚绑定：{error}"));
+    }
+    if let Err(error) = mgr
+      .set_account_proxy(&app, &provider_id, &uuid, &assignment.endpoint, None)
+      .await
+    {
+      let _ = adapter.unassign(&provider_id, &uuid);
+      return Err(format!("账号代理保存失败，已回滚 Proxy Gate 绑定：{error}"));
+    }
+    let mut snapshot = adapter.snapshot();
+    if let Some(item) = snapshot
+      .assignments
+      .iter_mut()
+      .find(|item| item.account_id == assignment.account_id)
+    {
+      item.account_alias = account_alias;
+    }
+    Ok(snapshot)
+  }
+  #[cfg(not(windows))]
+  {
+    let _ = (
+      app,
+      mgr,
+      provider_id,
+      uuid,
+      account_alias,
+      entry_id,
+      adapter,
+    );
+    Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string())
+  }
+}
+
+#[tauri::command]
+async fn unassign_proxy_gate_account(
+  app: AppHandle,
+  mgr: State<'_, Arc<SessionManager>>,
+  adapter: State<'_, ProxyGateAdapter>,
+  provider_id: String,
+  uuid: String,
+) -> Result<ProxyGateSnapshot, String> {
+  if !cfg!(windows) {
+    return Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string());
+  }
+  #[cfg(windows)]
+  {
+    adapter.unassign(&provider_id, &uuid)?;
+    mgr
+      .set_account_proxy(&app, &provider_id, &uuid, "", None)
+      .await?;
+    Ok(adapter.snapshot())
+  }
+  #[cfg(not(windows))]
+  {
+    let _ = (app, mgr, provider_id, uuid, adapter);
+    Err("Proxy Gate 目前仅支持 Windows 桌面版".to_string())
+  }
 }
 
 #[tauri::command]
@@ -230,6 +376,7 @@ pub fn run() {
       #[cfg(windows)]
       std::fs::create_dir_all(&app_data_dir)?;
       app.manage(ProxyPool::new(app_data_dir.clone()));
+      app.manage(ProxyGateAdapter::new(app_data_dir.clone()));
       let session_mgr = Arc::new(SessionManager::new(app_data_dir.clone()));
       app.manage(Arc::clone(&session_mgr));
 
@@ -306,6 +453,14 @@ pub fn run() {
       get_proxy_pool,
       set_proxy_pool_source,
       probe_proxy_pool,
+      get_proxy_gate_snapshot,
+      get_proxy_gate_status,
+      probe_proxy_gate_pool,
+      start_proxy_gate,
+      stop_proxy_gate,
+      set_proxy_gate_pool_source,
+      assign_proxy_gate_account,
+      unassign_proxy_gate_account,
       select_provider,
       add_account,
       rename_account,

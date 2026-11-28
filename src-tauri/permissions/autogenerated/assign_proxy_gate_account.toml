@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-assign-proxy-gate-account"
+description = "Enables the assign_proxy_gate_account command without any pre-configured scope."
+commands.allow = ["assign_proxy_gate_account"]
+
+[[permission]]
+identifier = "deny-assign-proxy-gate-account"
+description = "Denies the assign_proxy_gate_account command without any pre-configured scope."
+commands.deny = ["assign_proxy_gate_account"]

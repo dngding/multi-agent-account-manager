@@ -1,0 +1,22 @@
+proxies:
+  - name: upstream-hop
+    type: ss
+    server: hop.example.invalid
+    port: 443
+    cipher: aes-128-gcm
+    password: example
+  - name: fixed-node
+    type: ss
+    server: node.example.invalid
+    port: 443
+    cipher: aes-128-gcm
+    password: example
+    dialer-proxy: upstream-hop
+
+listeners:
+  - name: muse-fixed
+    type: socks
+    listen: 0.0.0.0
+    port: 19080
+    proxy: fixed-node
+

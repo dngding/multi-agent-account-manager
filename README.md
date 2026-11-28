@@ -16,6 +16,7 @@
 - **原生级多账号隔离**：macOS 使用独立 UUID `WKWebsiteDataStore`，Windows 使用独立 WebView2 `UserDataFolder`，Android 使用独立 WebView `MULTI_PROFILE`。
 - **Windows 按账号代理（功能分支）**：为账号 WebView 与登录弹窗绑定 HTTP / SOCKS5 代理，打开前握手检查，连续健康检查失败后关闭视图。新增支持“仅保存 / 检查并打开”：Windows 新账号必须使用代理，待配置账号不自动预热；后台代理中断后按账号推送最新状态。历史新增流程基线 `4dce77d` 的 Windows Rust 测试 23/23、独立 EXE 和 NSIS 构建通过；两个未登录测试账号已完成新增流程、后台中断状态更新，以及该版清空代理、阻止重开和重启恢复回归，版本归属见[2026-11-21 验收记录](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。界面“预检通过”仅表示有限握手检查，不代表公网出口、DNS / WebRTC、系统级拒绝直连、设备或账号关系隔离已验证。
 - **从现有代理池选择**：Windows 新增账号默认读取现有本地 YAML 固定端口池，支持搜索、来源选择、手动刷新及每 10 秒 / 窗口恢复焦点时同步。入口删除或目标变化需重新确认，不自动替换已绑定账号；保留手动地址。最终 `01c596d` Windows Rust 42/42、EXE / NSIS 构建通过；合成池候选变化在 `a4ac022` 实测，最终版另通过保存绑定、定义漂移关闭 A、重开阻断与 B 保留。真实池 / 机场链路、分项刷新和其他未覆盖项见[验收记录](docs/windows-proxy-pool-acceptance-results.md)。来源只读，Telegram 占用未知，配置一致性不证明运行中代理已重载或公网出口独立，操作见[使用说明](docs/existing-proxy-pool-setup.md)。
+- **Proxy Gate 独立代理层**：Windows 可选独立 `proxy-gate.exe`，为每个账号固定分配 `127.0.0.1:191xx` HTTP CONNECT 入口，自动探测并按可用性、延迟排序代理池。Gate 追踪完整静态链指纹，入口删除、定义变化或上游断线时返回 HTTP 503、切断已有连接且不回退直连；账号切回手动或原静态池时会先解除 Gate 绑定。另有原生托盘和可选的 HKCU 自启动。安装与边界见[Proxy Gate 接入说明](docs/proxy-gate-integration.md)。
 - **一键复制 Cookie**：Windows、macOS 和 Android 账号卡片支持把当前服务的登录 Cookie 写入系统剪贴板；桌面端会尽量禁止 Cookie 进入系统剪贴板历史或云同步。Cookie 属于登录凭据，请勿发送给不可信软件或网站。
 - **Muse 账户管理**：Windows 的 Muse 账号卡片新增账户管理按钮，可在该账号已有的独立 WebView、代理和 Cookie 环境中打开 Meta Accounts Center；再次点击同一按钮返回 Muse。若 Meta 要求重新验证密码或安全码，按页面提示在该隔离环境中完成。此功能不绕过 Meta 的账户安全验证，具体使用见[Muse 账户管理说明](docs/meta-account-management.md)。0.2.1 已在本机完成账户总览、联系方式编辑入口及返回 Muse 的实机验收，详见[验收记录](docs/meta-account-management-acceptance-2026-11-22.md)。
 - **桌面端快捷切号**：支持 `⌘1~9` / `Ctrl+1~9` 以及 `⌘↑`/`⌘↓`/`⌘[`/`⌘]`（Windows 为 `Ctrl`）快速切换账号。
@@ -138,7 +139,7 @@ Windows 按账号代理增强在用户 fork 的 `codex/windows-account-proxy` �
 
 ## 本地开发
 
-Windows 多账号隔离增强的设计范围、当前实现状态及后续网络 fail-closed 验收见[开发指引](docs/muse-multi-account-isolation-development-guide.md)。复用已有本地池见[代理池选择说明](docs/existing-proxy-pool-setup.md)，没有现成入口时再参考[机场代理配置指引](docs/airport-subscription-proxy-setup.md)。
+Windows 多账号隔离增强的设计范围、当前实现状态及后续网络 fail-closed 验收见[开发指引](docs/muse-multi-account-isolation-development-guide.md)。复用已有本地池见[代理池选择说明](docs/existing-proxy-pool-setup.md)，没有现成入口时再参考[机场代理配置指引](docs/airport-subscription-proxy-setup.md)。独立 Gate 的安装、每周池更新语义和叠号/托盘二选一规则见[Proxy Gate 接入说明](docs/proxy-gate-integration.md)。
 
 环境要求：Node.js 22+、Rust 1.85+，Android 构建需额外配置 Android SDK 与 NDK 26+。
 

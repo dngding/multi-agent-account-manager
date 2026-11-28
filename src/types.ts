@@ -85,6 +85,87 @@ export interface ProxyPoolHealthSnapshot {
   entries: ProxyPoolHealthEntry[];
 }
 
+export interface ProxyGateEntry {
+  entryId: string;
+  displayName: string;
+  type: string;
+  fingerprint: string;
+  chainDepth?: number | null;
+  health?: string | null;
+  latencyMs?: number | null;
+  message?: string | null;
+}
+
+export interface ProxyGateAssignment {
+  accountId: string;
+  providerId: ProviderId;
+  uuid: string;
+  accountAlias?: string | null;
+  entryId: string;
+  displayName: string;
+  fingerprint: string;
+  port: number;
+  endpoint: string;
+  bindingValid: boolean;
+  allowed?: boolean | null;
+  health?: string | null;
+  latencyMs?: number | null;
+  error?: string | null;
+}
+
+export interface ProxyGateRuntimeAssignment {
+  accountId: string;
+  entryId: string;
+  fingerprint: string;
+  label: string;
+  endpoint: string;
+  upstreamProxyUrl?: string | null;
+  allowed: boolean;
+  bindingValid: boolean;
+  health?: string | null;
+  latencyMs?: number | null;
+  error?: string | null;
+}
+
+export interface ProxyGateStatus {
+  updatedAtMs: number;
+  poolPath?: string | null;
+  poolRevision?: string | null;
+  error?: string | null;
+  assignments: ProxyGateRuntimeAssignment[];
+}
+
+export interface ProxyGateSnapshot {
+  available: boolean;
+  running: boolean;
+  error?: string | null;
+  exePath?: string | null;
+  configPath?: string | null;
+  poolPath?: string | null;
+  entries: ProxyGateEntry[];
+  assignments: ProxyGateAssignment[];
+  status?: ProxyGateStatus | null;
+}
+
+export interface ProxyGateProbeEntry {
+  entryId: string;
+  displayName: string;
+  type: string;
+  proxyUrl: string;
+  fingerprint: string;
+  chainDepth?: number | null;
+  health: string;
+  latencyMs: number;
+  message?: string | null;
+}
+
+export interface ProxyGateProbeSnapshot {
+  available: boolean;
+  error?: string | null;
+  revision: string;
+  entries: ProxyGateProbeEntry[];
+}
+
 export interface AccountNetworkState extends AccountKey {
   status: "pending" | "checking" | "ready" | "interrupted";
   message: string | null;

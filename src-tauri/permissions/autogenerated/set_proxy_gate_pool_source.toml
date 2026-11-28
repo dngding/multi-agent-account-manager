@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-set-proxy-gate-pool-source"
+description = "Enables the set_proxy_gate_pool_source command without any pre-configured scope."
+commands.allow = ["set_proxy_gate_pool_source"]
+
+[[permission]]
+identifier = "deny-set-proxy-gate-pool-source"
+description = "Denies the set_proxy_gate_pool_source command without any pre-configured scope."
+commands.deny = ["set_proxy_gate_pool_source"]

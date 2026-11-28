@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "poolPath": "C:/Users/example/WorkBuddy/2026-11-27-12-00-00/telegram-panel/flclash-sidecar/sidecar.yaml",
+  "listenHost": "127.0.0.1",
+  "portStart": 19100,
+  "portEnd": 19199,
+  "healthTarget": "https://muse.ai/",
+  "healthIntervalSeconds": 60,
+  "allowHandshakeOnly": true,
+  "assignments": []
+}

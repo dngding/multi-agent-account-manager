@@ -33,7 +33,9 @@ jobs:
           components: rustfmt
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ./src-tauri -> target
+          workspaces: |
+            ./src-tauri -> target
+            ./proxy-gate -> target
       - run: npm ci
       - run: npm run build
       - name: Check changed Rust formatting (advisory)
@@ -55,6 +57,12 @@ jobs:
           }
       - name: Run Windows Rust unit tests
         run: cargo test --manifest-path src-tauri/Cargo.toml --locked --lib --target x86_64-pc-windows-msvc
+      - name: Test Proxy Gate
+        working-directory: proxy-gate
+        run: cargo test --workspace --locked --target x86_64-pc-windows-msvc
+      - name: Build Proxy Gate
+        working-directory: proxy-gate
+        run: cargo build --release --locked --package maam-proxy-gate --target x86_64-pc-windows-msvc
       - name: Build Windows installer
         run: npm run tauri -- build --target x86_64-pc-windows-msvc --bundles nsis --ci
       - name: Upload Windows installer
@@ -64,4 +72,5 @@ jobs:
           path: |
             src-tauri/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
             src-tauri/target/x86_64-pc-windows-msvc/release/multi-agent-account-manager.exe
+            proxy-gate/target/x86_64-pc-windows-msvc/release/proxy-gate.exe
           if-no-files-found: error

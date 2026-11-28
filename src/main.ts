@@ -8,6 +8,11 @@ import type {
   ManagerSnapshot,
   ProviderId,
   ProviderInfo,
+  ProxyGateAssignment,
+  ProxyGateEntry,
+  ProxyGateProbeEntry,
+  ProxyGateProbeSnapshot,
+  ProxyGateSnapshot,
   ProxyPoolBinding,
   ProxyPoolEntry,
   ProxyPoolHealthEntry,
@@ -48,7 +53,7 @@ let lastRenderedUpdateStage: string | null = null;
 const copyingCookies = new Set<string>();
 
 interface ProxyPickerState {
-  mode: "pool" | "manual";
+  mode: "pool" | "manual" | "gate";
   pool: ProxyPoolSnapshot | null;
   selected: ProxyPoolBinding | null;
   loading: boolean;
@@ -64,9 +69,22 @@ interface ProxyPickerState {
   healthCheckedAtMs: number | null;
   healthSeq: number;
   healthRevision: string | null;
+  gate: ProxyGateSnapshot | null;
+  gateLoading: boolean;
+  gateError: string | null;
+  gateProbing: boolean;
+  gateProbeError: string | null;
+  gateProbeSeq: number;
+  gateSearch: string;
+  gateSourceDraft: string;
+  gateSelectedEntryId: string | null;
+  gateActionLoading: boolean;
+  gateRequestSeq: number;
 }
 
 let proxyPicker: ProxyPickerState | null = null;
+let proxyGateSnapshot: ProxyGateSnapshot | null = null;
+let proxyGateError: string | null = null;
 
 function hasProxyPicker(): boolean {
   return snapshot?.platform === "windows" && (modal.kind === "add" || modal.kind === "proxy");
@@ -105,6 +123,117 @@ function proxyHealthLabel(health: ProxyPoolHealthEntry | undefined, probing: boo
   if (health?.handshakeOnly) return `仅握手可用 · ${health.latencyMs} ms`;
   if (health) return "不可用";
   return probing ? "待检测" : "未检测";
+}
+
+function proxyGateHealthRank(entry: ProxyGateEntry): number {
+  if (entry.health === "available") return 0;
+  if (entry.health === "handshake_only") return 1;
+  if (entry.health === "unavailable") return 2;
+  return 3;
+}
+
+function proxyGateHealthLabel(
+  health: string | null | undefined,
+  latencyMs: number | null | undefined,
+  fallback = "未检测",
+): string {
+  const latency = typeof latencyMs === "number" ? ` · ${latencyMs} ms` : "";
+  switch (health) {
+    case "available":
+      return `可用${latency}`;
+    case "handshake_only":
+      return `仅握手可用${latency}`;
+    case "unavailable":
+      return "不可用";
+    default:
+      return fallback;
+  }
+}
+
+function proxyGateCurrentAssignment(picker: ProxyPickerState): ProxyGateAssignment | null {
+  if (modal.kind !== "proxy" || !picker.gate) return null;
+  const account = modal.account;
+  return picker.gate.assignments.find(
+    (assignment) =>
+      assignment.providerId === account.providerId &&
+      assignment.uuid === account.uuid,
+  ) ?? null;
+}
+
+function proxyGateOptions(picker: ProxyPickerState): string {
+  const query = picker.gateSearch.trim().toLocaleLowerCase();
+  const entries = picker.gate?.entries ?? [];
+  const options = entries
+    .filter((entry) =>
+      entry.entryId === picker.gateSelectedEntryId ||
+      `${entry.displayName} ${entry.entryId} ${entry.type}`.toLocaleLowerCase().includes(query)
+    )
+    .map((entry, index) => ({ entry, index }))
+    .sort((left, right) => {
+      const rank = proxyGateHealthRank(left.entry) - proxyGateHealthRank(right.entry);
+      if (rank !== 0) return rank;
+      if (
+        typeof left.entry.latencyMs === "number" &&
+        typeof right.entry.latencyMs === "number"
+      ) {
+        return left.entry.latencyMs - right.entry.latencyMs || left.index - right.index;
+      }
+      return left.index - right.index;
+    });
+
+  return `<option value="">请选择一个 Proxy Gate 入口</option>${options.map(({ entry }) => {
+    const users = (picker.gate?.assignments ?? []).filter(
+      (assignment) => assignment.entryId === entry.entryId,
+    );
+    const usage = users.length ? ` · ${users.length} 号已绑定` : "";
+    const chainDepth = entry.chainDepth ?? 0;
+    const chain = chainDepth > 0 ? ` · ${chainDepth} 层链` : "";
+    const health = proxyGateHealthLabel(entry.health, entry.latencyMs);
+    return `<option value="${escapeHtml(entry.entryId)}"${entry.entryId === picker.gateSelectedEntryId ? " selected" : ""}>${escapeHtml(`${health} · ${entry.displayName} · ${entry.type}${chain}${usage}`)}</option>`;
+  }).join("")}`;
+}
+
+function proxyGateStatus(picker: ProxyPickerState): string {
+  if (picker.gateLoading) return "正在读取 Proxy Gate 状态与入口…";
+  if (picker.gateError) return `Proxy Gate 读取失败：${picker.gateError}`;
+  if (picker.gateProbing) {
+    return `${picker.gate?.entries.length ?? 0} 个入口 · 正在通过每个上游实际探测页面，可用入口完成后会自动置顶…`;
+  }
+  const gate = picker.gate;
+  if (!gate) return "尚未读取 Proxy Gate 状态。";
+  if (picker.gateProbeError) return `${gate.entries.length} 个入口；可用性检测失败：${picker.gateProbeError}`;
+  if (gate.error) return gate.error;
+  if (gate.status?.error) return gate.status.error;
+  if (!gate.available) {
+    return "未找到可用的 proxy-gate.exe 或配置文件。可通过 PROXY_GATE_EXE / PROXY_GATE_CONFIG 指定路径。";
+  }
+  const runtime = gate.running ? "运行中" : "已停止";
+  const available = gate.entries.filter((entry) => entry.health === "available").length;
+  const handshakeOnly = gate.entries.filter((entry) => entry.health === "handshake_only").length;
+  const unavailable = gate.entries.filter((entry) => entry.health === "unavailable").length;
+  const unknown = gate.entries.length - available - handshakeOnly - unavailable;
+  return `${runtime} · ${gate.entries.length} 个入口（可用 ${available} / 仅握手 ${handshakeOnly} / 不可用 ${unavailable} / 未检测 ${unknown}）· ${gate.assignments.length} 个账号绑定`;
+}
+
+function proxyGateSelectedDetail(picker: ProxyPickerState): string {
+  if (picker.gateError) return "修正 Proxy Gate 路径或启动问题后再选择入口。";
+  const entryId = picker.gateSelectedEntryId;
+  const entry = picker.gate?.entries.find((item) => item.entryId === entryId);
+  if (!entry) return "保存后会为该账号创建固定的本机 191xx 入口，并在整链指纹变化时 fail-closed。";
+  const assignments = (picker.gate?.assignments ?? []).filter(
+    (assignment) => assignment.entryId === entry.entryId,
+  );
+  const parts = [
+    `类型 ${entry.type}`,
+    `指纹 ${entry.fingerprint.slice(0, 12)}…`,
+    (entry.chainDepth ?? 0) > 0 ? `静态链 ${entry.chainDepth} 层` : "单入口",
+    proxyGateHealthLabel(entry.health, entry.latencyMs),
+  ];
+  if (assignments.length) {
+    parts.push(`已绑定：${assignments.map((item) => item.accountAlias || item.uuid.slice(0, 8)).join("、")}`);
+  }
+  if (entry.message) parts.push(entry.message);
+  return parts.join("；");
 }
 
 function proxyPoolOptions(picker: ProxyPickerState): string {
@@ -192,12 +321,59 @@ function renderProxyPicker(manualId: string, manualDraft: string): string {
   const picker = proxyPicker;
   if (!picker) return "";
   const poolMode = picker.mode === "pool";
+  const gateMode = picker.mode === "gate";
+  const gateAvailable = modal.kind === "proxy";
+  const currentAssignment = proxyGateCurrentAssignment(picker);
+  const gate = picker.gate;
   return `
     <div class="proxy-mode-switch" role="group" aria-label="代理配置方式">
-      <button type="button" class="btn ${poolMode ? "selected" : ""}" data-proxy-mode="pool" aria-pressed="${poolMode}">从现有代理池选择</button>
-      <button type="button" class="btn ${!poolMode ? "selected" : ""}" data-proxy-mode="manual" aria-pressed="${!poolMode}">手动地址</button>
+      <button type="button" class="btn ${poolMode ? "selected" : ""}" data-proxy-mode="pool" aria-pressed="${poolMode}">静态代理池</button>
+      <button type="button" class="btn ${gateMode ? "selected" : ""}" data-proxy-mode="gate" aria-pressed="${gateMode}"${gateAvailable ? "" : ` disabled title="请先保存账号，再进入此账号的代理配置绑定 Proxy Gate"`}>Proxy Gate</button>
+      <button type="button" class="btn ${picker.mode === "manual" ? "selected" : ""}" data-proxy-mode="manual" aria-pressed="${picker.mode === "manual"}">手动地址</button>
     </div>
-    ${poolMode ? `
+    ${gateMode ? `
+      <div class="proxy-gate-panel">
+        <div class="proxy-gate-runtime">
+          <div>
+            <strong>${gate?.running ? "Gate 运行中" : gate?.available ? "Gate 已停止" : "Gate 尚未就绪"}</strong>
+            <span>${gate?.configPath ? escapeHtml(gate.configPath) : "等待配置"}</span>
+          </div>
+          <div class="proxy-gate-actions">
+            <button id="proxy-gate-refresh" class="btn" type="button"${picker.gateLoading || picker.gateActionLoading ? " disabled" : ""}>刷新</button>
+            <button id="proxy-gate-start" class="btn" type="button"${!gate?.available || gate.running || picker.gateActionLoading ? " disabled" : ""}>启动</button>
+            <button id="proxy-gate-stop" class="btn" type="button"${!gate?.available || !gate.running || picker.gateActionLoading ? " disabled" : ""}>停止</button>
+          </div>
+        </div>
+        <label class="modal-field-label" for="proxy-gate-search">搜索入口</label>
+        <input id="proxy-gate-search" class="modal-input" placeholder="名称、入口 ID 或类型" value="${escapeHtml(picker.gateSearch)}" />
+        <label class="modal-field-label" for="proxy-gate-select">选择固定入口</label>
+        <select id="proxy-gate-select" class="modal-input proxy-pool-select"${picker.gateLoading || picker.gateError || !gate?.entries.length ? " disabled" : ""}>${proxyGateOptions(picker)}</select>
+        <div id="proxy-gate-status" class="modal-desc${picker.gateError || gate?.error ? " proxy-pool-warning" : ""}" role="status">${escapeHtml(proxyGateStatus(picker))}</div>
+        <div id="proxy-gate-probe-progress" class="proxy-gate-probe-progress" role="progressbar" aria-label="正在探测 Proxy Gate 入口"${picker.gateProbing ? "" : " hidden"}><div class="update-progress-track"><div class="update-progress-fill indeterminate"></div></div><span>正在检测上游代理可用性，最多需要数秒</span></div>
+        <div id="proxy-gate-selection-detail" class="modal-desc${currentAssignment && !currentAssignment.bindingValid ? " proxy-pool-warning" : ""}">${escapeHtml(proxyGateSelectedDetail(picker))}</div>
+        <details id="proxy-gate-source-settings" class="proxy-pool-source">
+          <summary>Proxy Gate 代理池来源</summary>
+          <div id="proxy-gate-current-source" class="modal-desc proxy-pool-path">${escapeHtml(gate?.poolPath ?? "自动发现现有代理池")}</div>
+          <input id="proxy-gate-source-path" class="modal-input" spellcheck="false" placeholder="C:/path/to/sidecar.yaml；留空自动发现" value="${escapeHtml(picker.gateSourceDraft)}" />
+          <div class="proxy-pool-source-actions">
+            <button id="proxy-gate-source-apply" class="btn" type="button"${picker.gateActionLoading ? " disabled" : ""}>应用并同步入口</button>
+            <button id="proxy-gate-source-auto" class="btn" type="button"${picker.gateActionLoading ? " disabled" : ""}>自动发现</button>
+          </div>
+          <div class="modal-desc">换池会重新计算入口和指纹。已有账号绑定时 Gate 会拒绝换池，必须先逐账号解除绑定，避免旧账号被静默切到新代理。</div>
+        </details>
+        ${currentAssignment ? `
+          <div class="proxy-gate-current ${currentAssignment.bindingValid && currentAssignment.allowed !== false ? "ready" : "invalid"}">
+            <div>
+              <strong>当前绑定：${escapeHtml(currentAssignment.displayName)}</strong>
+              <span>${escapeHtml(currentAssignment.endpoint)} · ${escapeHtml(proxyGateHealthLabel(currentAssignment.health, currentAssignment.latencyMs))}</span>
+              <span>${currentAssignment.bindingValid && currentAssignment.allowed !== false ? "绑定有效，打开账号时仍会重新预检" : escapeHtml(currentAssignment.error || "绑定失效或指纹变化，打开会被阻断")}</span>
+            </div>
+            <button id="proxy-gate-unassign" class="btn" type="button"${picker.gateActionLoading ? " disabled" : ""}>解除绑定</button>
+          </div>
+        ` : ""}
+        <div class="modal-desc">保存后固定写入该账号的本机 191xx 入口。Gate 在上游不可用或整链指纹漂移时返回 503并切断现有连接，不会回退直连。</div>
+      </div>
+    ` : poolMode ? `
       <div class="proxy-pool-picker">
         <label class="modal-field-label" for="proxy-pool-search">搜索代理</label>
         <div class="proxy-pool-toolbar">
@@ -235,7 +411,66 @@ function renderProxyPicker(manualId: string, manualDraft: string): string {
 
 function refreshProxyPickerDom(): void {
   const picker = proxyPicker;
-  if (!picker || !hasProxyPicker() || picker.mode !== "pool") return;
+  if (!picker || !hasProxyPicker()) return;
+  if (picker.mode === "gate") {
+    const search = document.querySelector<HTMLInputElement>("#proxy-gate-search");
+    if (search && document.activeElement !== search) search.value = picker.gateSearch;
+    const select = document.querySelector<HTMLSelectElement>("#proxy-gate-select");
+    if (select) {
+      const options = proxyGateOptions(picker);
+      if (select.dataset.optionsHtml !== options) {
+        select.innerHTML = options;
+        select.dataset.optionsHtml = options;
+      }
+      select.value = picker.gateSelectedEntryId ?? "";
+      select.disabled =
+        picker.gateLoading ||
+        picker.gateProbing ||
+        Boolean(picker.gateError) ||
+        !picker.gate?.entries.length;
+    }
+    const status = document.querySelector<HTMLElement>("#proxy-gate-status");
+    if (status) {
+      status.textContent = proxyGateStatus(picker);
+      status.classList.toggle(
+        "proxy-pool-warning",
+        Boolean(picker.gateError || picker.gateProbeError || picker.gate?.error),
+      );
+    }
+    const detail = document.querySelector<HTMLElement>("#proxy-gate-selection-detail");
+    if (detail) detail.textContent = proxyGateSelectedDetail(picker);
+    const progress = document.querySelector<HTMLElement>("#proxy-gate-probe-progress");
+    if (progress) progress.hidden = !picker.gateProbing;
+    const currentSource = document.querySelector<HTMLElement>("#proxy-gate-current-source");
+    if (currentSource) currentSource.textContent = picker.gate?.poolPath ?? "自动发现现有代理池";
+    const sourceInput = document.querySelector<HTMLInputElement>("#proxy-gate-source-path");
+    if (sourceInput && document.activeElement !== sourceInput) {
+      sourceInput.value = picker.gateSourceDraft;
+    }
+    const refresh = document.querySelector<HTMLButtonElement>("#proxy-gate-refresh");
+    const start = document.querySelector<HTMLButtonElement>("#proxy-gate-start");
+    const stop = document.querySelector<HTMLButtonElement>("#proxy-gate-stop");
+    const unassign = document.querySelector<HTMLButtonElement>("#proxy-gate-unassign");
+    const sourceApply = document.querySelector<HTMLButtonElement>("#proxy-gate-source-apply");
+    const sourceAuto = document.querySelector<HTMLButtonElement>("#proxy-gate-source-auto");
+    if (refresh) refresh.disabled = picker.gateLoading || picker.gateProbing || picker.gateActionLoading;
+    if (start) start.disabled = !picker.gate?.available || Boolean(picker.gate.running) || picker.gateActionLoading;
+    if (stop) stop.disabled = !picker.gate?.available || !picker.gate.running || picker.gateActionLoading;
+    if (unassign) unassign.disabled = picker.gateActionLoading;
+    if (sourceApply) sourceApply.disabled = picker.gateActionLoading;
+    if (sourceAuto) sourceAuto.disabled = picker.gateActionLoading;
+    const primary = document.querySelector<HTMLButtonElement>("#modal-confirm-btn");
+    if (primary) {
+      primary.disabled =
+        picker.gateLoading ||
+        picker.gateProbing ||
+        Boolean(picker.gateError) ||
+        !picker.gateSelectedEntryId ||
+        picker.gateActionLoading;
+    }
+    return;
+  }
+  if (picker.mode !== "pool") return;
   const select = document.querySelector<HTMLSelectElement>("#proxy-pool-select");
   if (select) {
     const options = proxyPoolOptions(picker);
@@ -386,6 +621,213 @@ async function refreshProxyPool(sourcePath?: string, forceHealth = false): Promi
   }
 }
 
+function applyProxyGateSnapshot(result: ProxyGateSnapshot, picker: ProxyPickerState | null): void {
+  proxyGateSnapshot = result;
+  proxyGateError = null;
+  if (!picker) return;
+  picker.gate = result;
+  picker.gateError = null;
+  picker.gateProbeSeq += 1;
+  picker.gateProbing = false;
+  picker.gateProbeError = null;
+  picker.gateSourceDraft = result.poolPath ?? "";
+  if (
+    picker.gateSelectedEntryId &&
+    !result.entries.some((entry) => entry.entryId === picker.gateSelectedEntryId)
+  ) {
+    picker.gateSelectedEntryId = null;
+  }
+  const assignment = proxyGateCurrentAssignment(picker);
+  if (!picker.gateSelectedEntryId && assignment) {
+    picker.gateSelectedEntryId = assignment.entryId;
+  }
+}
+
+async function refreshProxyGate(probeEntries = false): Promise<void> {
+  const picker = proxyPicker;
+  if (!picker || !hasProxyPicker()) return;
+  const requestSeq = ++picker.gateRequestSeq;
+  picker.gateLoading = true;
+  picker.gateError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyGateSnapshot>("get_proxy_gate_snapshot");
+    if (
+      proxyPicker !== picker ||
+      requestSeq !== picker.gateRequestSeq ||
+      !hasProxyPicker()
+    ) {
+      return;
+    }
+    applyProxyGateSnapshot(result, picker);
+    if (probeEntries && result.available && result.entries.length) {
+      void probeProxyGatePool(picker);
+    }
+  } catch (error) {
+    if (proxyPicker !== picker || requestSeq !== picker.gateRequestSeq) return;
+    proxyGateError = String(error);
+    picker.gateError = String(error);
+  } finally {
+    if (proxyPicker === picker && requestSeq === picker.gateRequestSeq) {
+      picker.gateLoading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+function mergeProxyGateProbeEntries(
+  entries: ProxyGateEntry[],
+  probes: ProxyGateProbeEntry[],
+): ProxyGateEntry[] {
+  const byId = new Map(probes.map((entry) => [entry.entryId, entry]));
+  return entries.map((entry) => {
+    const probe = byId.get(entry.entryId);
+    if (!probe) return { ...entry, health: null, latencyMs: null, message: null };
+    return {
+      ...entry,
+      displayName: probe.displayName,
+      type: probe.type,
+      fingerprint: probe.fingerprint,
+      chainDepth: probe.chainDepth ?? null,
+      health: probe.health,
+      latencyMs: probe.latencyMs,
+      message: probe.message ?? null,
+    };
+  });
+}
+
+async function probeProxyGatePool(picker: ProxyPickerState): Promise<void> {
+  if (!picker.gate || picker.gateProbing || !picker.gate.entries.length) return;
+  const probeSeq = ++picker.gateProbeSeq;
+  picker.gateProbing = true;
+  picker.gateProbeError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyGateProbeSnapshot>("probe_proxy_gate_pool");
+    if (
+      proxyPicker !== picker ||
+      probeSeq !== picker.gateProbeSeq ||
+      !picker.gate ||
+      !hasProxyPicker()
+    ) {
+      return;
+    }
+    picker.gate = {
+      ...picker.gate,
+      entries: mergeProxyGateProbeEntries(picker.gate.entries, result.entries),
+    };
+    proxyGateSnapshot = picker.gate;
+    picker.gateProbeError = result.error ?? (result.available ? null : "Proxy Gate 探测不可用。");
+    if (
+      picker.gateSelectedEntryId &&
+      !picker.gate.entries.some((entry) => entry.entryId === picker.gateSelectedEntryId)
+    ) {
+      picker.gateSelectedEntryId = null;
+    }
+  } catch (error) {
+    if (proxyPicker === picker && probeSeq === picker.gateProbeSeq) {
+      picker.gateProbeError = String(error);
+    }
+  } finally {
+    if (proxyPicker === picker && probeSeq === picker.gateProbeSeq) {
+      picker.gateProbing = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+async function refreshProxyGateSummary(): Promise<void> {
+  if (snapshot?.platform !== "windows") {
+    proxyGateSnapshot = null;
+    proxyGateError = null;
+    return;
+  }
+  try {
+    const result = await invoke<ProxyGateSnapshot>("get_proxy_gate_snapshot");
+    proxyGateSnapshot = result;
+    proxyGateError = null;
+  } catch (error) {
+    proxyGateError = String(error);
+  } finally {
+    if (snapshot && modal.kind === "none") render();
+  }
+}
+
+async function runProxyGateAction(
+  command: "start_proxy_gate" | "stop_proxy_gate",
+): Promise<void> {
+  const picker = proxyPicker;
+  if (!picker || picker.gateActionLoading) return;
+  picker.gateActionLoading = true;
+  picker.gateError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyGateSnapshot>(command);
+    if (proxyPicker === picker) applyProxyGateSnapshot(result, picker);
+  } catch (error) {
+    if (proxyPicker === picker) picker.gateError = String(error);
+  } finally {
+    if (proxyPicker === picker) {
+      picker.gateActionLoading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+async function applyProxyGatePoolSource(sourcePath: string): Promise<void> {
+  const picker = proxyPicker;
+  if (!picker || picker.gateActionLoading) return;
+  picker.gateActionLoading = true;
+  picker.gateError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyGateSnapshot>("set_proxy_gate_pool_source", {
+      sourcePath,
+    });
+    if (proxyPicker === picker) {
+      applyProxyGateSnapshot(result, picker);
+      picker.gateSourceDraft = result.poolPath ?? "";
+    }
+  } catch (error) {
+    if (proxyPicker === picker) picker.gateError = String(error);
+  } finally {
+    if (proxyPicker === picker) {
+      picker.gateActionLoading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
+async function unassignCurrentProxyGateAccount(): Promise<void> {
+  if (modal.kind !== "proxy") return;
+  const picker = proxyPicker;
+  if (!picker || picker.gateActionLoading) return;
+  const account = modal.account;
+  picker.gateActionLoading = true;
+  picker.gateError = null;
+  refreshProxyPickerDom();
+  try {
+    const result = await invoke<ProxyGateSnapshot>("unassign_proxy_gate_account", {
+      providerId: account.providerId,
+      uuid: account.uuid,
+    });
+    applyProxyGateSnapshot(result, picker);
+    picker.gateSelectedEntryId = null;
+    await setModal({ kind: "none" });
+    await callCommand("get_manager_state");
+  } catch (error) {
+    if (proxyPicker === picker) {
+      picker.gateError = String(error);
+      if (modal.kind === "proxy") modal.error = String(error);
+    }
+  } finally {
+    if (proxyPicker === picker) {
+      picker.gateActionLoading = false;
+      refreshProxyPickerDom();
+    }
+  }
+}
+
 function proxySubmission(manualDraft: string, allowEmpty: boolean): {
   proxyUrl: string;
   proxyPoolBinding: ProxyPoolBinding | null;
@@ -477,6 +919,40 @@ function accountNetworkPresentation(state: ManagerSnapshot, account: AccountReco
   if (account.proxyRequired && !account.proxyUrl) {
     return { className: "pending", label: "待配置 · 已阻止打开", message: "设置独立代理后才能打开此账号。" };
   }
+  const gateAssignment = proxyGateSnapshot?.assignments.find(
+    (assignment) =>
+      assignment.providerId === account.providerId && assignment.uuid === account.uuid,
+  );
+  if (gateAssignment) {
+    if (!gateAssignment.bindingValid || gateAssignment.allowed === false) {
+      return {
+        className: "interrupted",
+        label: "Gate 绑定失效 · 已阻止打开",
+        message: gateAssignment.error || "Proxy Gate 绑定目标或整链指纹已变化，请重新选择入口。",
+      };
+    }
+    if (proxyGateError) {
+      return {
+        className: "interrupted",
+        label: "Gate 状态不可读 · 已阻止打开",
+        message: proxyGateError,
+      };
+    }
+    if (proxyGateSnapshot && (!proxyGateSnapshot.available || !proxyGateSnapshot.running)) {
+      return {
+        className: "interrupted",
+        label: "Gate 未运行 · 已阻止打开",
+        message: "启动 Proxy Gate 后才能打开此账号；Gate 不会回退直连。",
+      };
+    }
+    if (gateAssignment.health === "unavailable") {
+      return {
+        className: "interrupted",
+        label: "Gate 上游不可用 · 已阻止打开",
+        message: gateAssignment.error || "当前上游代理不可用，打开前还会重新检查。",
+      };
+    }
+  }
   if (networkState?.status === "interrupted") {
     return { className: "interrupted", label: "代理中断 · 已阻止打开", message: networkState.message };
   }
@@ -487,6 +963,16 @@ function accountNetworkPresentation(state: ManagerSnapshot, account: AccountReco
     (key) => key.providerId === account.providerId && key.uuid === account.uuid
   );
   if (account.proxyUrl) {
+    if (gateAssignment) {
+      return {
+        className: "gate",
+        label:
+          gateAssignment.health === "handshake_only"
+            ? "Gate 仅握手 · 打开时复查"
+            : "Gate 就绪 · 打开时复查",
+        message: gateAssignment.error ?? null,
+      };
+    }
     return {
       className: "configured",
       label: account.pendingActivation
@@ -822,13 +1308,25 @@ async function setModal(next: ModalMode): Promise<void> {
   modal = next;
   if (snapshot?.platform === "windows" && (next.kind === "add" || next.kind === "proxy")) {
     const binding = next.kind === "proxy" ? next.account.proxyPoolBinding ?? null : null;
+    const gateAssignment = next.kind === "proxy"
+      ? proxyGateSnapshot?.assignments.find(
+          (assignment) =>
+            assignment.providerId === next.account.providerId &&
+            assignment.uuid === next.account.uuid,
+        ) ?? null
+      : null;
     proxyPicker = {
-      mode: next.kind === "add" || binding ? "pool" : "manual",
+      mode: gateAssignment ? "gate" : next.kind === "add" || binding ? "pool" : "manual",
       pool: null, selected: binding ? { ...binding } : null, loading: true,
       search: "", sourceDraft: binding?.sourcePath ?? "", sourceTouched: false,
       sourceSettingsOpen: false, selectionWarning: null, requestSeq: 0,
       health: new Map(), healthLoading: false, healthError: null,
       healthCheckedAtMs: null, healthSeq: 0, healthRevision: null,
+      gate: proxyGateSnapshot, gateLoading: false, gateError: proxyGateError,
+      gateProbing: false, gateProbeError: null, gateProbeSeq: 0,
+      gateSearch: "", gateSourceDraft: proxyGateSnapshot?.poolPath ?? "",
+      gateSelectedEntryId: gateAssignment?.entryId ?? null,
+      gateActionLoading: false, gateRequestSeq: 0,
     };
   } else {
     proxyPicker = null;
@@ -854,11 +1352,21 @@ async function setModal(next: ModalMode): Promise<void> {
   } else if (next.kind === "remove") {
     document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.focus();
   } else if (next.kind === "proxy") {
-    const input = document.querySelector<HTMLInputElement>(proxyPicker?.mode === "pool" ? "#proxy-pool-search" : "#modal-proxy-input");
+    const selector =
+      proxyPicker?.mode === "pool"
+        ? "#proxy-pool-search"
+        : proxyPicker?.mode === "gate"
+          ? "#proxy-gate-search"
+          : "#modal-proxy-input";
+    const input = document.querySelector<HTMLInputElement>(selector);
     input?.focus();
     input?.select();
   }
-  if (hasProxyPicker()) void refreshProxyPool();
+  if (hasProxyPicker() && proxyPicker?.mode === "gate") {
+    void refreshProxyGate(true);
+  } else if (hasProxyPicker()) {
+    void refreshProxyPool();
+  }
 }
 
 async function callCommand(
@@ -1447,12 +1955,23 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
   document.querySelectorAll<HTMLButtonElement>("[data-proxy-mode]").forEach((button) => {
     button.addEventListener("click", () => {
       if (!proxyPicker || modalSubmitting || busy) return;
-      proxyPicker.mode = button.dataset.proxyMode === "manual" ? "manual" : "pool";
+      const requestedMode = button.dataset.proxyMode;
+      if (requestedMode === "gate" && modal.kind !== "proxy") return;
+      proxyPicker.mode =
+        requestedMode === "gate" ? "gate" : requestedMode === "manual" ? "manual" : "pool";
       if (modal.kind === "add" || modal.kind === "proxy") modal.error = null;
       render();
-      const id = proxyPicker.mode === "pool" ? "proxy-pool-search" : modal.kind === "add" ? "modal-add-proxy-input" : "modal-proxy-input";
+      const id =
+        proxyPicker.mode === "pool"
+          ? "proxy-pool-search"
+          : proxyPicker.mode === "gate"
+            ? "proxy-gate-search"
+            : modal.kind === "add"
+              ? "modal-add-proxy-input"
+              : "modal-proxy-input";
       document.getElementById(id)?.focus();
       if (proxyPicker.mode === "pool") void refreshProxyPool();
+      if (proxyPicker.mode === "gate") void refreshProxyGate(true);
     });
   });
   document.querySelector<HTMLInputElement>("#proxy-pool-search")?.addEventListener("input", (event) => {
@@ -1494,6 +2013,52 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
     if (proxyPicker) void refreshProxyPool(proxyPicker.sourceDraft.trim());
   });
   document.querySelector("#proxy-pool-source-auto")?.addEventListener("click", () => void refreshProxyPool(""));
+  document.querySelector<HTMLInputElement>("#proxy-gate-search")?.addEventListener("input", (event) => {
+    if (!proxyPicker) return;
+    proxyPicker.gateSearch = (event.currentTarget as HTMLInputElement).value;
+    refreshProxyPickerDom();
+  });
+  document.querySelector<HTMLInputElement>("#proxy-gate-search")?.addEventListener("keydown", async (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      document.querySelector<HTMLButtonElement>("#modal-confirm-btn")?.click();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      await setModal({ kind: "none" });
+    }
+  });
+  document.querySelector<HTMLSelectElement>("#proxy-gate-select")?.addEventListener("change", (event) => {
+    if (!proxyPicker) return;
+    const value = (event.currentTarget as HTMLSelectElement).value;
+    proxyPicker.gateSelectedEntryId =
+      proxyPicker.gate?.entries.some((entry) => entry.entryId === value) ? value : null;
+    if (modal.kind === "proxy") modal.error = null;
+    refreshProxyPickerDom();
+  });
+  document.querySelector("#proxy-gate-refresh")?.addEventListener("click", () => void refreshProxyGate(true));
+  document.querySelector("#proxy-gate-start")?.addEventListener("click", () => {
+    void runProxyGateAction("start_proxy_gate");
+  });
+  document.querySelector("#proxy-gate-stop")?.addEventListener("click", () => {
+    void runProxyGateAction("stop_proxy_gate");
+  });
+  document.querySelector("#proxy-gate-unassign")?.addEventListener("click", () => {
+    void unassignCurrentProxyGateAccount();
+  });
+  document.querySelector<HTMLInputElement>("#proxy-gate-source-path")?.addEventListener("input", (event) => {
+    if (!proxyPicker) return;
+    proxyPicker.gateSourceDraft = (event.currentTarget as HTMLInputElement).value;
+  });
+  document.querySelector("#proxy-gate-source-apply")?.addEventListener("click", () => {
+    if (proxyPicker) void applyProxyGatePoolSource(proxyPicker.gateSourceDraft.trim());
+  });
+  document.querySelector("#proxy-gate-source-auto")?.addEventListener("click", () => {
+    if (!proxyPicker) return;
+    proxyPicker.gateSourceDraft = "";
+    const input = document.querySelector<HTMLInputElement>("#proxy-gate-source-path");
+    if (input) input.value = "";
+    void applyProxyGatePoolSource("");
+  });
   document.querySelectorAll<HTMLElement>("[data-provider]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const nextId = btn.dataset.provider as ProviderId;
@@ -1775,12 +2340,79 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
         alias,
       });
     } else if (currentModal.kind === "proxy") {
+      if (proxyPicker?.mode === "gate") {
+        const picker = proxyPicker;
+        const entryId = picker.gateSelectedEntryId;
+        const entry = picker.gate?.entries.find((item) => item.entryId === entryId);
+        if (!entryId || !entry) {
+          currentModal.error = "请从最新 Proxy Gate 入口中选择一项。";
+          render();
+          document.querySelector<HTMLSelectElement>("#proxy-gate-select")?.focus();
+          return;
+        }
+        modalSubmitting = true;
+        picker.gateActionLoading = true;
+        currentModal.error = null;
+        refreshProxyPickerDom();
+        try {
+          const result = await invoke<ProxyGateSnapshot>("assign_proxy_gate_account", {
+            providerId: currentModal.account.providerId,
+            uuid: currentModal.account.uuid,
+            accountAlias: currentModal.account.alias,
+            entryId,
+          });
+          applyProxyGateSnapshot(result, picker);
+          await setModal({ kind: "none" });
+          await callCommand("get_manager_state");
+        } catch (error) {
+          currentModal.error = String(error);
+          if (proxyPicker === picker) {
+            picker.gateError = String(error);
+            picker.gateActionLoading = false;
+            refreshProxyPickerDom();
+          }
+          if (modal.kind === "proxy") render();
+        } finally {
+          modalSubmitting = false;
+          if (proxyPicker === picker) picker.gateActionLoading = false;
+        }
+        return;
+      }
+      const picker = proxyPicker;
       const submission = proxySubmission(currentModal.draft, proxyPicker?.mode === "manual");
       currentModal.error = submission.error;
       if (currentModal.error) {
         render();
-        document.getElementById(proxyPicker?.mode === "pool" ? "proxy-pool-select" : "modal-proxy-input")?.focus();
+        document
+          .querySelector<HTMLInputElement | HTMLSelectElement>(
+            proxyPicker?.mode === "pool" ? "#proxy-pool-select" : "#modal-proxy-input",
+          )
+          ?.focus();
         return;
+      }
+      const oldGateAssignment = picker ? proxyGateCurrentAssignment(picker) : null;
+      if (picker && oldGateAssignment) {
+        modalSubmitting = true;
+        picker.gateActionLoading = true;
+        currentModal.error = null;
+        refreshProxyPickerDom();
+        try {
+          const result = await invoke<ProxyGateSnapshot>("unassign_proxy_gate_account", {
+            providerId: currentModal.account.providerId,
+            uuid: currentModal.account.uuid,
+          });
+          applyProxyGateSnapshot(result, picker);
+        } catch (error) {
+          currentModal.error = `解除旧 Proxy Gate 绑定失败：${String(error)}`;
+          render();
+          return;
+        } finally {
+          modalSubmitting = false;
+          if (proxyPicker === picker) {
+            picker.gateActionLoading = false;
+            refreshProxyPickerDom();
+          }
+        }
       }
       await setModal({ kind: "none" });
       await callCommand("set_account_proxy", {
@@ -1801,10 +2433,20 @@ function bindEvents(state: ManagerSnapshot, provider: ProviderInfo): void {
 
 async function bootstrap(): Promise<void> {
   window.addEventListener("focus", () => {
-    if (hasProxyPicker() && !proxyPicker?.loading) void refreshProxyPool();
+    if (!hasProxyPicker() || proxyPicker?.loading) return;
+    if (proxyPicker?.mode === "gate") {
+      if (!proxyPicker.gateLoading && !proxyPicker.gateProbing) void refreshProxyGate(true);
+    } else {
+      void refreshProxyPool();
+    }
   });
   window.setInterval(() => {
-    if (hasProxyPicker() && !proxyPicker?.loading) void refreshProxyPool();
+    if (!hasProxyPicker() || proxyPicker?.loading) return;
+    if (proxyPicker?.mode === "gate") {
+      if (!proxyPicker.gateLoading && !proxyPicker.gateActionLoading) void refreshProxyGate();
+    } else {
+      void refreshProxyPool();
+    }
   }, 10_000);
   await listen<ManagerSnapshot>("manager-state-changed", (event) => {
     saveScrollPosition();
@@ -1814,6 +2456,7 @@ async function bootstrap(): Promise<void> {
     }
     render();
     restoreScrollPosition();
+    void refreshProxyGateSummary();
   });
 
   await listen<UpdateProgressEvent>("update-progress", (event) => {
@@ -1924,6 +2567,7 @@ async function bootstrap(): Promise<void> {
 
   snapshot = await invoke<ManagerSnapshot>("get_manager_state");
   render();
+  void refreshProxyGateSummary();
   setTimeout(() => {
     void runCheckForUpdates(true);
   }, 3500);
