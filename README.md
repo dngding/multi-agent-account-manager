@@ -57,9 +57,9 @@
 
 Windows 按账号代理增强在用户 fork 的 `codex/windows-account-proxy` 功能分支开发。进入 [dngding 仓库的 Windows CI](https://github.com/dngding/multi-agent-account-manager/actions/workflows/windows-ci.yml?query=branch%3Acodex%2Fwindows-account-proxy)，选择该分支中**源码提交匹配、构建成功**的运行，在页面底部下载 `windows-x64-nsis-acceptance` artifact。它包含独立 EXE 和 NSIS 安装器；下载 artifact 通常需要登录 GitHub。
 
-本轮构建来自 [01c596d 的成功 CI](https://github.com/dngding/multi-agent-account-manager/actions/runs/44926476039)，可直接进入[最终 artifact 下载页](https://github.com/dngding/multi-agent-account-manager/actions/runs/44926476039/artifacts/14715672060)。Rust 42/42，测试归属、未覆盖项与文件哈希见[代理池验收记录](docs/windows-proxy-pool-acceptance-results.md)。此前 `4dce77d` 新增流程与后台状态的历史基线见[2026-11-21 报告](docs/windows-proxy-setup-state-acceptance-2026-11-21.md)。首次使用仍建议按[断线验收手册](docs/windows-proxy-disconnect-acceptance.md)，用独立 EXE 和全新测试数据目录检查自己的代理链路，再用于正式账号。
+本轮五阶段功能由 [`a8770cd` 的成功 Windows CI](https://github.com/dngding/multi-agent-account-manager/actions/runs/46136438658)构建，artifact 同时包含叠号安装器、独立 EXE 和 `proxy-gate.exe`，可直接进入[最终 artifact 下载页](https://github.com/dngding/multi-agent-account-manager/actions/runs/46136438658/artifacts/15259523534)。真实池解析、静态链漂移、断线 fail-closed、托盘、自启动和适配器验收边界见[Proxy Gate Windows 验收记录](proxy-gate/docs/windows-acceptance-2026-11-28.md)。首次使用仍建议先按[Proxy Gate 接入说明](docs/proxy-gate-integration.md)用空白测试数据目录检查自己的代理链路，再用于正式账号。
 
-已有 Telegram Panel / Mihomo 本地固定端口池时，可按[从现有代理池选择](docs/existing-proxy-pool-setup.md)使用选择器，无需为叠号重复导入机场订阅或再开代理服务。选择器包含在上述 `01c596d` 构建中；真实机场链路仍需用空白 profile 单独核验，不能把合成配置验收当成现有生产池已通过。
+已有 Telegram Panel / Mihomo 本地固定端口池时，可按[从现有代理池选择](docs/existing-proxy-pool-setup.md)使用选择器，无需为叠号重复导入机场订阅或再开代理服务。Proxy Gate 模式的入口健康检测、自动排序和每周池更新语义见[独立 Gate 接入说明](docs/proxy-gate-integration.md)；真实机场链路仍需用空白 profile 单独核验，不能把合成配置验收当成现有生产池已通过。
 
 没有现成代理池时，机场订阅接入和固定账号端口配置见[机场订阅 → Mihomo 配置指引](docs/airport-subscription-proxy-setup.md)。订阅链接先由代理客户端解析，叠号使用固定 HTTP / SOCKS5 端口；现有池选择器只读固定入口配置，不直接解析订阅。
 
